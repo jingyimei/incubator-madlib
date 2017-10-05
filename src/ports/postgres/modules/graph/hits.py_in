@@ -32,16 +32,20 @@ import plpy
 import sys
 from utilities.control import MinWarning
 from utilities.utilities import _assert
+from utilities.utilities import _check_groups
+from utilities.utilities import _grp_from_table
 from utilities.utilities import add_postfix
 from utilities.utilities import extract_keyvalue_params
-from utilities.utilities import unique_string
+from utilities.utilities import unique_string, split_quoted_delimited_str
 from utilities.utilities import is_platform_pg
 
+from utilities.validate_args import columns_exist_in_table, get_cols_and_types
 from graph_utils import *
 
 
 def validate_hits_args(schema_madlib, vertex_table, vertex_id, edge_table,
-                       edge_params, out_table, max_iter, threshold):
+                       edge_params, out_table, max_iter, threshold,
+                       grouping_cols_list):
     """
     Function to validate input parameters for HITS
     """
@@ -53,9 +57,14 @@ def validate_hits_args(schema_madlib, vertex_table, vertex_id, edge_table,
     _assert(max_iter > 0,
             """HITS: Invalid max_iter value ({0}), must be a positive integer.""".format(
                 max_iter))
+    if grouping_cols_list:
+    # validate the grouping columns. We currently only support grouping_cols
+    # to be column names in the edge_table, and not expressions!
+    _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib),
+            "PageRank error: One or more grouping columns specified do not exist!")
 
 def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
-         out_table, max_iter, threshold, **kwargs):
+         out_table, max_iter, threshold, grouping_cols, **kwargs):
     """
     Function that computes the HITS scores
 
@@ -80,9 +89,14 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             max_iter = 100
         if not vertex_id:
             vertex_id = "id"
+        if not grouping_cols:
+            grouping_cols = ''
 
+        grouping_cols_list = split_quoted_delimited_str(grouping_cols)
         validate_hits_args(schema_madlib, vertex_table, vertex_id, edge_table,
-                               edge_params, out_table, max_iter, threshold)
+                               edge_params, out_table, max_iter, threshold, 
+                               grouping_cols_list)
+
         summary_table = add_postfix(out_table, "_summary")
         _assert(not table_exists(summary_table),
                 """Graph HITS: Output summary table ({summary_table}) already
@@ -99,9 +113,17 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         if threshold is None:
             threshold = 1.0 / (n_vertices * 1000)
 
+        # table/column names used when grouping_cols is set.
+        distinct_grp_table = ''
+        vertices_per_group = ''
+        grouping_where_clause = ''
+        group_by_clause = ''
+
         edge_temp_table = unique_string(desp='temp_edge')
+        grouping_cols_comma = grouping_cols + ',' if grouping_cols else ''
         distribution = ('' if is_platform_pg() else
-                        "DISTRIBUTED BY ({0})".format(dest))
+                        "DISTRIBUTED BY ({0}{1})".format(
+                            grouping_cols_comma, dest))
         plpy.execute("DROP TABLE IF EXISTS {0}".format(edge_temp_table))
         plpy.execute("""
                 CREATE TEMP TABLE {edge_temp_table} AS
@@ -109,7 +131,7 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 {distribution}
             """.format(**locals()))
 
-        # GPDB and HAWQ have distributed by clauses to help them with indexing.
+        # GPDB has distributed by clauses to help them with indexing.
         # For Postgres we add the index explicitly.
         if is_platform_pg():
             plpy.execute("CREATE INDEX ON {0}({1})".format(
@@ -131,27 +153,92 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             cur_distribution = cnts_distribution = ''
         else:
             cur_distribution = cnts_distribution = \
-                "DISTRIBUTED BY ({0})".format(vertex_id)
+                "DISTRIBUTED BY ({0}{1})".format(
+                    grouping_cols_comma, vertex_id)
         cur_join_clause = " {cur}.{vertex_id} = {edge_temp_table}.{dest}".format(
             **locals())
         v1_join_clause = "{v1}.{vertex_id} = {edge_temp_table}.{src}".format(
             **locals())
 
-        authority_init_value = 1.0
-        hub_init_value = 1.0
-        plpy.execute("""
+        ######################################################################
+        # Create several strings that will be used to construct required
+        # queries. These strings will be required only during grouping.
+        ignore_group_clause_first = ''
+
+        grouping_cols_select_pr = ''
+        ignore_group_clause_pr = ''
+
+        grouping_cols_select_ins = ''
+
+        message_grp_where_ins = ''
+        ignore_group_clause_ins = ''
+
+        grouping_cols_select_conv = '{0}.{1}'.format(cur, vertex_id)
+        group_by_grouping_cols_conv = ''
+        message_grp_clause_conv = ''
+        ignore_group_clause_conv = ''
+
+        if grouping_cols:
+            distinct_grp_table = unique_string(desp='grp')
+            plpy.execute("DROP TABLE IF EXISTS {0}".format(distinct_grp_table))
+            plpy.execute("""CREATE TEMP TABLE {distinct_grp_table} AS
+                    SELECT DISTINCT {grouping_cols} FROM {edge_temp_table}
+                """.format(**locals()))
+            subq = unique_string(desp='subquery')
+            grouping_where_clause = _check_groups(
+                distinct_grp_table, subq, grouping_cols_list)
+            group_by_clause = _grp_from_table(
+                distinct_grp_table, grouping_cols_list)
+
+            authority_init_value = 1.0
+            hub_init_value = 1.0
+
+            plpy.execute("DROP TABLE IF EXISTS {0}".format(cur))
+            plpy.execute("""
                 CREATE TEMP TABLE {cur} AS
-                SELECT {vertex_id}, {authority_init_value}::DOUBLE PRECISION 
-                AS authority,
-                {hub_init_value}::DOUBLE PRECISION AS hub
-                FROM {vertex_table}
-                {cur_distribution}
+                SELECT {group_by_clause}, {subq}.{vertex_id}
+                        {authority_init_value}::DOUBLE PRECISION AS authority,
+                        {hub_init_value}::DOUBLE PRECISION AS hub
+                FROM (
+                    SELECT {grouping_cols}, {vertex_id}
+                    FROM {edge_temp_table} join {vertex_table}
+                    on {edge_temp_table}.{src}={vertex_table}.{vertex_id}
+                    UNION
+                    SELECT {grouping_cols}, {vertex_id}
+                    FROM {edge_temp_table} join {vertex_table}
+                    on {edge_temp_table}.{dest}={vertex_table}.{vertex_id}
+                ){subq}
+                ON {grouping_where_clause}, {vertex_table}.{vertex_id}
+                {cur_distribution}.
             """.format(**locals()))
 
-        # The summary table contains the total number of iterations.
+        # The summary table contains the total number of iterations for each group
+        cols_names_types = get_cols_and_types(edge_table)
+        grouping_cols_clause = ', '.join([c_name + " " + c_type
+                                              for (c_name, c_type)
+                                                in cols_names_types
+                                              if c_name in grouping_cols_list])
         plpy.execute("""
                 CREATE TABLE {summary_table} (
+                    {grouping_cols_clause},
                     __iterations__ INTEGER
+                )
+            """.format(**locals()))
+
+        # Create output table. This will be updated whenever a group converge
+        plpy.execute("""
+                CREATE TABLE {out_table} (
+                    {grouping_cols_clause},
+                    {vertex_id} INTEGER,
+                    authority DOUBLE PRECISION,
+                    hub DOUBLE PRECISION
+                )
+            """.format(**locals()))
+        temp_summary_table = unique_string(desp='temp_summary')
+        plpy.execute("DROP TABLE IF EXISTS {0}".format(temp_summary_table))
+        plpy.execute("""
+                CREATE TABLE {temp_summary_table} (
+                    {grouping_cols_clause}
                 )
             """.format(**locals()))
 
@@ -164,15 +251,16 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         authority_norm = 1
         hub_norm = 1
 
+        group_by_clause = _grp_from_table(cur, grouping_cols_list)
         plpy.execute("""
                 CREATE TABLE {message_unconv_authority} AS
-                SELECT {cur}.{vertex_id}
+                SELECT {group_by_clause}, {cur}.{vertex_id}
                 FROM {cur}
                 LIMIT 0
             """.format(**locals()))
         plpy.execute("""
                 CREATE TABLE {message_unconv_hub} AS
-                SELECT {cur}.{vertex_id}
+                SELECT {group_by_clause}, {cur}.{vertex_id}
                 FROM {cur}
                 LIMIT 0
             """.format(**locals()))
@@ -195,15 +283,20 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             # calculate authority
             # if there is no node that point to A, authority_i(A) = 0
             ###################################################################
+            grouping_where_clause_1 = _check_groups(cur, edge_temp_table, grouping_cols_list)
+            grouping_where_clause_2 = _check_groups(cur, v1, grouping_cols_list)
+            grouping_where_clause_3 = _check_groups(cur, v2, grouping_cols_list)
             plpy.execute("""
                     CREATE TABLE {message} AS
-                    SELECT {cur}.{vertex_id} AS {vertex_id},
+                    SELECT {group_by_clause}, {cur}.{vertex_id} AS {vertex_id},
                             COALESCE(SUM({v1}.hub), 0.0) AS authority,
                             {cur}.hub AS hub
                     FROM {cur}
                         LEFT JOIN {edge_temp_table} ON {cur_join_clause}
                         LEFT JOIN {cur} AS {v1} ON {v1_join_clause}
-                    GROUP BY {cur}.{vertex_id}, {cur}.hub
+                    WHERE {grouping_where_clause_1}
+                    AND {grouping_where_clause_2}
+                    GROUP BY {group_by_clause}, {cur}.{vertex_id}, {cur}.hub
                     ORDER BY {cur}.{vertex_id}
                     {cur_distribution}
                 """.format(**locals()))
@@ -216,16 +309,21 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 {edge_temp_table}.{src}".format(**locals())
             v2_join_clause = "{v2}.{vertex_id} = {edge_temp_table}.{dest}".format(
                 **locals())
+            grouping_where_clause = _check_groups(
+                tmp2, message, grouping_cols_list)
+            group_by_clause = _grp_from_table(message, grouping_cols_list)
             plpy.execute("""
                     UPDATE {message}
                     SET hub = {tmp2}.hub
                     FROM
-                    (SELECT {message}.{vertex_id} AS {vertex_id},
+                    (SELECT {group_by_clause}, {message}.{vertex_id} AS {vertex_id},
                             COALESCE(SUM({v2}.authority), 0) AS hub
                     FROM {message}
                         LEFT JOIN {edge_temp_table} ON {message_join_clause}
                         LEFT JOIN {message} AS {v2} ON {v2_join_clause}
-                    GROUP BY {message}.{vertex_id}) AS {tmp2}
+                    WHERE {grouping_where_clause_1}
+                    AND {grouping_where_clause_3}     
+                    GROUP BY {group_by_clause}, {message}.{vertex_id}) AS {tmp2}
                     WHERE {tmp2}.{vertex_id} = {message}.{vertex_id}
                 """.format(**locals()))
 
