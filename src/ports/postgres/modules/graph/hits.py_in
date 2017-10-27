@@ -379,8 +379,7 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                     from (SELECT {grouping_cols_comma}
                             auth_sum_norm_square_root,
                             hub_sum_norm_square_root
-                        FROM {sum_norm_square_root_by_group}
-                        LIMIT 1) s
+                        FROM {sum_norm_square_root_by_group}) s
                     {grouping_where_clause}
                 """.format(**locals()))
 
