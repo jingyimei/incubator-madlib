@@ -60,8 +60,8 @@ def validate_hits_args(schema_madlib, vertex_table, vertex_id, edge_table,
     if grouping_cols_list:
     # validate the grouping columns. We currently only support grouping_cols
     # to be column names in the edge_table, and not expressions!
-        _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib,
-            "HITs error: One or more grouping columns specified do not exist!"))
+        _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib),
+            "HITs error: One or more grouping columns specified do not exist!")
 
 def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
          out_table, max_iter, threshold, grouping_cols, **kwargs):
@@ -174,12 +174,15 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         grouping_cols_with_comma = ''
         group_group_group = ''
         if grouping_cols:
-            grouping_where_clause = _check_groups(distinct_grp_table, subq, grouping_cols_list)
-            group_by_clause = _grp_from_table(distinct_grp_table, grouping_cols_list)
-            grouping_where_clause_with_comma = grouping_where_clause + ','
+            distinct_grp_table = unique_string(desp='grp')
+            plpy.execute("DROP TABLE IF EXISTS {0}".format(distinct_grp_table))
+            plpy.execute("""CREATE TEMP TABLE {distinct_grp_table} AS
+                    SELECT DISTINCT {grouping_cols} FROM {edge_temp_table}
+                """.format(**locals()))
+            group_by_clause = _grp_from_table(subq, grouping_cols_list)
             group_by_clause_with_comma = group_by_clause + ','
             grouping_cols_with_comma = grouping_cols + ','
-            group_group_group = 'GROUP BY ' + grouping_cols
+            group_group_group = 'GROUP BY ' + grouping_cols + ',' + vertex_id
 
         authority_init_value = 1.0
         hub_init_value = 1.0
@@ -220,15 +223,6 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 )
             """.format(**locals()))
 
-        # Create output table. This will be updated whenever a group converge
-        # plpy.execute("""
-        #         CREATE TABLE {out_table} (
-        #             {grouping_cols_clause_with_comma}
-        #             {vertex_id} INTEGER,
-        #             authority DOUBLE PRECISION,
-        #             hub DOUBLE PRECISION
-        #         )
-        #     """.format(**locals()))
         temp_summary_table = unique_string(desp='temp_summary')
         plpy.execute("DROP TABLE IF EXISTS {0}".format(temp_summary_table))
         plpy.execute("""
@@ -236,6 +230,19 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                     {grouping_cols_clause}
                 )
             """.format(**locals()))
+
+        if grouping_cols:
+            # Create output table. This will be updated whenever a group converges
+            # Note that vertex_id is assumed to be an integer (as described in
+            # documentation)
+            plpy.execute("""
+                    CREATE TABLE {out_table} (
+                        {grouping_cols_clause_with_comma}
+                        {vertex_id} INTEGER,
+                        authority DOUBLE PRECISION,
+                        hub DOUBLE PRECISION
+                    )
+                """.format(**locals()))
 
         iteration_num = 0
 
@@ -271,8 +278,15 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             # calculate authority
             # if there is no node that point to A, authority_i(A) = 0
             ###################################################################
-            grouping_where_clause_1 = 'WHERE' + _check_groups(cur, edge_temp_table, grouping_cols_list) + \
-                'AND' + _check_groups(cur, v1, grouping_cols_list) if grouping_cols_list else ''
+            group_by_clause_with_comma = ''
+            grouping_cols_with_comma = ''
+            grouping_where_clause_1 = ''
+            if grouping_cols:
+                group_by_clause = _grp_from_table(cur, grouping_cols_list)
+                group_by_clause_with_comma = group_by_clause + ','
+                grouping_cols_with_comma = grouping_cols + ','
+                grouping_where_clause_1 = 'WHERE' + _check_groups(cur, edge_temp_table, grouping_cols_list) + \
+                    'AND' + _check_groups(cur, v1, grouping_cols_list)
             plpy.execute("""
                     CREATE TABLE {message} AS
                     SELECT {group_by_clause_with_comma} {cur}.{vertex_id} AS {vertex_id},
@@ -283,7 +297,6 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                         LEFT JOIN {cur} AS {v1} ON {v1_join_clause}
                     {grouping_where_clause_1}
                     GROUP BY {group_by_clause_with_comma} {cur}.{vertex_id}, {cur}.hub
-                    ORDER BY {cur}.{vertex_id}
                     {cur_distribution}
                 """.format(**locals()))
 
@@ -297,13 +310,18 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
 
             v2_join_clause = "{v2}.{vertex_id} = {edge_temp_table}.{dest}".format(
                 **locals())
-            grouping_where_clause = _check_groups(
-                tmp2, message, grouping_cols_list)
-            group_by_clause = _grp_from_table(message, grouping_cols_list)
-            group_by_clause_with_comma = group_by_clause + ',' if grouping_cols_list else ''
-            grouping_where_clause_2 = 'WHERE' + _check_groups(message, edge_temp_table, grouping_cols_list) + \
-                'AND' + _check_groups(message, v2, grouping_cols_list) if grouping_cols_list else ''
-            grouping_where_clause_3 = 'AND' + _check_groups(message, tmp2, grouping_cols_list) if grouping_cols_list else ''
+
+            grouping_where_clause = ''
+            group_by_clause = ''
+            group_by_clause_with_comma =''
+            grouping_where_clause_2 = ''
+            grouping_where_clause_3 = ''
+            if grouping_cols:
+                group_by_clause = _grp_from_table(message, grouping_cols_list)
+                group_by_clause_with_comma = group_by_clause + ','
+                grouping_where_clause_2 = 'WHERE' + _check_groups(message, edge_temp_table, grouping_cols_list) + \
+                    'AND' + _check_groups(message, v2, grouping_cols_list)
+                grouping_where_clause_3 = 'AND' + _check_groups(message, tmp2, grouping_cols_list) if grouping_cols_list else ''
 
             plpy.execute("""
                     UPDATE {message}
@@ -320,19 +338,22 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                     {grouping_where_clause_3}
                 """.format(**locals()))
 
+            group_by_clause_with_comma = ''
+            group_by_clause_with_word = ''
+            if grouping_cols:
+                group_by_clause = _grp_from_table(message, grouping_cols_list)
+                group_by_clause_with_comma = group_by_clause + ','
+                group_by_clause_with_word = 'GROUP BY' + group_by_clause
 
-            # normalize authority value with L2 distance
+            # normalize authority and hub score with L2 distance
             sum_norm_square_root_by_group = unique_string(desp='sum_norm_square_root_by_group')
-            group_by_clause = _grp_from_table(message, grouping_cols_list) if grouping_cols else ''
-            group_by_clause_with_comma = group_by_clause + ',' if grouping_cols else ''
-
             plpy.execute("""
                     CREATE TEMP TABLE {sum_norm_square_root_by_group} AS
                         SELECT {group_by_clause_with_comma}
                             SQRT(SUM(POWER(authority, 2))) AS auth_sum_norm_square_root,
                             SQRT(SUM(POWER(hub, 2))) AS hub_sum_norm_square_root
                         FROM {message}
-                    {group_by_clause}
+                    {group_by_clause_with_word}
                 """.format(**locals()))
 
             num_zero_sum_norm_square_root = plpy.execute("""
@@ -347,16 +368,15 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
 
             grouping_where_clause = ''
             grouping_cols_comma = ''
-            if grouping_cols_list:
-                grouping_where_clause = 'WHERE' + _check_groups('m', 's', grouping_cols_list)
-                grouping_cols_comma= grouping_cols_list + ','
+            if grouping_cols:
+                grouping_where_clause = 'WHERE' + _check_groups(message, 's', grouping_cols_list)
+                grouping_cols_comma= grouping_cols + ','
 
             plpy.execute("""
                     UPDATE {message}
                         SET authority = {message}.authority/s.auth_sum_norm_square_root,
                             hub = {message}.hub/s.hub_sum_norm_square_root
-                    from {message} m,
-                        (SELECT {grouping_cols_comma}
+                    from (SELECT {grouping_cols_comma}
                             auth_sum_norm_square_root,
                             hub_sum_norm_square_root
                         FROM {sum_norm_square_root_by_group}
@@ -371,27 +391,26 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 # groups after current and previous iterations respectively. 
                 # we check if there is at least one unconverged node (limit 1
                 # is used in the query).
-                group_by_clause_with_comma = ''
+                group_by_clause = '{0}.{1}'.format(cur, vertex_id)
                 and_group_col_clause = ''
                 if grouping_cols and grouping_cols_list:
                     group_by_clause = _grp_from_table(cur, grouping_cols_list) 
-                    group_by_clause_with_comma = group_by_clause + ',' 
                     and_group_col_clause = ' AND ' +_check_groups(cur, message, grouping_cols_list)
 
                 plpy.execute("""
                         CREATE TEMP TABLE {message_unconv} AS
-                        SELECT {group_by_clause_with_comma} {cur}.{vertex_id}
+                        SELECT {group_by_clause}
                         FROM {message}
                         INNER JOIN {cur}
                         ON {cur}.{vertex_id}={message}.{vertex_id}
                         {and_group_col_clause}
                         WHERE ABS({cur}.authority-{message}.authority) > {threshold}
-                        AND ABS({cur}.hub-{message}.hub) > {threshold}
+                        OR ABS({cur}.hub-{message}.hub) > {threshold}
                     """.format(**locals()))
 
                 unconverged_node_num = plpy.execute("""
-                        SELECT COUNT(*) FROM {0}
-                    """.format(message_unconv))
+                        SELECT COUNT(*) AS cnt FROM {0}
+                    """.format(message_unconv))[0]["cnt"]
                 converged = unconverged_node_num == 0
 
                 if iteration_num > 0 and grouping_cols:
@@ -408,6 +427,7 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             plpy.execute("DROP TABLE IF EXISTS {0}".format(cur))
             plpy.execute("""ALTER TABLE {message} RENAME TO {cur}
                     """.format(**locals()))
+            plpy.execute("DROP TABLE IF EXISTS {0}".format(sum_norm_square_root_by_group))
 
             if converged:
                 break
@@ -440,9 +460,10 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 """.format(**locals()))
 
         # Cleanup All the intermediate tables
-        plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3},{4}
-            """.format(edge_temp_table, cur, message, cur_unconv,
-                       message_unconv))
+        plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3},{4},{5},{6}
+            """.format(edge_temp_table, cur, message, cur_unconv,temp_summary_table,
+                      sum_norm_square_root_by_group, message_unconv))
+
         if grouping_cols:
             plpy.execute("""DROP TABLE IF EXISTS {0},{1}
                 """.format(temp_summary_table,
