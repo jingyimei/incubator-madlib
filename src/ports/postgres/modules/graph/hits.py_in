@@ -393,7 +393,7 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 group_by_clause = '{0}.{1}'.format(cur, vertex_id)
                 and_group_col_clause = ''
                 if grouping_cols and grouping_cols_list:
-                    group_by_clause = _grp_from_table(cur, grouping_cols_list) 
+                    group_by_clause = 'DISTINCT' + _grp_from_table(cur, grouping_cols_list) 
                     and_group_col_clause = ' AND ' +_check_groups(cur, message, grouping_cols_list)
 
                 plpy.execute("""
