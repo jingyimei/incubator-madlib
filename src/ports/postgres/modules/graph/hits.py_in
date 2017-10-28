@@ -226,7 +226,7 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         temp_summary_table = unique_string(desp='temp_summary')
         plpy.execute("DROP TABLE IF EXISTS {0}".format(temp_summary_table))
         plpy.execute("""
-                CREATE TABLE {temp_summary_table} (
+                CREATE TEMP TABLE {temp_summary_table} (
                     {grouping_cols_clause}
                 )
             """.format(**locals()))
@@ -280,22 +280,23 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             ###################################################################
             group_by_clause_with_comma = ''
             grouping_cols_with_comma = ''
-            grouping_where_clause_1 = ''
+            group_join_condition_cur_and_edge = ''
+            group_join_condition_v1_and_edge = ''
             if grouping_cols:
                 group_by_clause = _grp_from_table(cur, grouping_cols_list)
                 group_by_clause_with_comma = group_by_clause + ','
                 grouping_cols_with_comma = grouping_cols + ','
-                grouping_where_clause_1 = 'WHERE' + _check_groups(cur, edge_temp_table, grouping_cols_list) + \
-                    'AND' + _check_groups(cur, v1, grouping_cols_list)
+                group_join_condition_cur_and_edge = 'AND' + _check_groups(cur, edge_temp_table, grouping_cols_list)
+                group_join_condition_v1_and_edge = 'AND' + _check_groups(cur, v1, grouping_cols_list)
+
             plpy.execute("""
                     CREATE TABLE {message} AS
                     SELECT {group_by_clause_with_comma} {cur}.{vertex_id} AS {vertex_id},
                             COALESCE(SUM({v1}.hub), 0.0) AS authority,
                             {cur}.hub AS hub
                     FROM {cur}
-                        LEFT JOIN {edge_temp_table} ON {cur_join_clause}
-                        LEFT JOIN {cur} AS {v1} ON {v1_join_clause}
-                    {grouping_where_clause_1}
+                        LEFT JOIN {edge_temp_table} ON {cur_join_clause} {group_join_condition_cur_and_edge}
+                        LEFT JOIN {cur} AS {v1} ON {v1_join_clause} {group_join_condition_v1_and_edge}
                     GROUP BY {group_by_clause_with_comma} {cur}.{vertex_id}, {cur}.hub
                     {cur_distribution}
                 """.format(**locals()))
@@ -311,18 +312,16 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             v2_join_clause = "{v2}.{vertex_id} = {edge_temp_table}.{dest}".format(
                 **locals())
 
-            grouping_where_clause = ''
-            group_by_clause = ''
             group_by_clause_with_comma =''
-            grouping_where_clause_2 = ''
             grouping_where_clause_3 = ''
+            group_join_condition_msg_and_edge = ''
+            group_join_condition_msg_and_v2 = ''
             if grouping_cols:
                 group_by_clause = _grp_from_table(message, grouping_cols_list)
                 group_by_clause_with_comma = group_by_clause + ','
-                grouping_where_clause_2 = 'WHERE' + _check_groups(message, edge_temp_table, grouping_cols_list) + \
-                    'AND' + _check_groups(message, v2, grouping_cols_list)
                 grouping_where_clause_3 = 'AND' + _check_groups(message, tmp2, grouping_cols_list) if grouping_cols_list else ''
-
+                group_join_condition_msg_and_edge = 'AND' + _check_groups(message, edge_temp_table, grouping_cols_list)
+                group_join_condition_msg_and_v2 = 'AND' + _check_groups(message, v2, grouping_cols_list)
             plpy.execute("""
                     UPDATE {message}
                     SET hub = {tmp2}.hub
@@ -330,9 +329,8 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                     (SELECT {group_by_clause_with_comma} {message}.{vertex_id} AS {vertex_id},
                             COALESCE(SUM({v2}.authority), 0) AS hub
                     FROM {message}
-                        LEFT JOIN {edge_temp_table} ON {message_join_clause}
-                        LEFT JOIN {message} AS {v2} ON {v2_join_clause}
-                    {grouping_where_clause_2}
+                        LEFT JOIN {edge_temp_table} ON {message_join_clause} {group_join_condition_msg_and_edge}
+                        LEFT JOIN {message} AS {v2} ON {v2_join_clause} {group_join_condition_msg_and_v2}
                     GROUP BY {group_by_clause_with_comma} {message}.{vertex_id}) AS {tmp2}
                     WHERE {tmp2}.{vertex_id} = {message}.{vertex_id}
                     {grouping_where_clause_3}
@@ -393,12 +391,12 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 group_by_clause = '{0}.{1}'.format(cur, vertex_id)
                 and_group_col_clause = ''
                 if grouping_cols and grouping_cols_list:
-                    group_by_clause = 'DISTINCT' + _grp_from_table(cur, grouping_cols_list) 
+                    group_by_clause = _grp_from_table(cur, grouping_cols_list)
                     and_group_col_clause = ' AND ' +_check_groups(cur, message, grouping_cols_list)
 
                 plpy.execute("""
-                        CREATE TEMP TABLE {message_unconv} AS
-                        SELECT {group_by_clause}
+                        CREATE TABLE {message_unconv} AS
+                        SELECT DISTINCT {group_by_clause}
                         FROM {message}
                         INNER JOIN {cur}
                         ON {cur}.{vertex_id}={message}.{vertex_id}
@@ -459,14 +457,9 @@ def hits(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 """.format(**locals()))
 
         # Cleanup All the intermediate tables
-        plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3},{4},{5},{6}
-            """.format(edge_temp_table, cur, message, cur_unconv,temp_summary_table,
-                      sum_norm_square_root_by_group, message_unconv))
+        plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3}
+            """.format(cur, message, cur_unconv, message_unconv))
 
-        if grouping_cols:
-            plpy.execute("""DROP TABLE IF EXISTS {0},{1}
-                """.format(temp_summary_table,
-                           distinct_grp_table))
 
 def update_result_tables(temp_summary_table, i, summary_table, out_table,
                          res_table, grouping_cols_list, cur_unconv,
