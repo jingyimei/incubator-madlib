@@ -50,6 +50,10 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         
         _validate_strs(source_table, output_table, class_col, class_sizes, 
             output_table_size, grouping_cols)
+
+        if class_sizes.lower() == 'oversample' and with_replacement is False:
+            plpy.error("Sample: Cannot use without replacement with "
+                        "oversampling.")
         source_table_columns = ','.join(get_cols(source_table))
         grp_by = "GROUP BY {0}".format(class_col)
         """
@@ -63,104 +67,118 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                             {grp_by})
                      """.format(**locals())) 
 
-        if class_sizes.lower() == 'undersample':
+        if class_sizes.lower() == 'oversample':
+            with_replacement = True
+            func_name = 'max'
+        else:
+            if with_replacement is None:
+                with_replacement = False
+            func_name = 'min'
 
-            if not with_replacement:               
-                """
-                    Random undersample without replacement
-                """
-                output_sql = """ 
-                    CREATE TABLE {output_table} AS (
-                        SELECT 
-                            {source_table_columns} 
-                        FROM
-                            (SELECT 
-                                *,
-                                row_number() OVER(PARTITION BY 
-                                    {class_col} ORDER BY random()) 
-                                    AS __row_no
-                            FROM {source_table}) AS foo 
-                        WHERE __row_no <= 
-                            (SELECT 
-                                MIN(class_count) 
-                             FROM {class_counts}))
-                    """.format(**locals())
-                plpy.execute(output_sql)
-            else:
-                """
-                    Random undersample with replacement.
-                """
-                """
-                    Create row identifiers for each row wrt the class
-                """
-                classwise_row_numbering_sql = """
-                    SELECT 
-                        *,
-                        row_number() OVER(PARTITION BY {class_col})
-                        AS __row_no
-                    FROM
-                        {source_table}
-                    """.format(**locals())
-                """
-                    Create independent random values 
-                    for each class that has more than the min number of rows
-                """
-                random_minorityclass_size_sample_number_gen_sql = """
-                    SELECT 
-                        classes, 
-                        generate_series(1,minority_class_size) AS _i, 
-                        ((random()*({class_counts}.class_count-1)+1)::int) 
-                        AS __row_no
+        if with_replacement:
+            """
+                Random sample with replacement.
+            """
+            """
+                Create row identifiers for each row wrt the class
+            """
+            classwise_row_numbering_sql = """
+                SELECT 
+                    *,
+                    row_number() OVER(PARTITION BY {class_col})
+                    AS __row_no
+                FROM
+                    {source_table}
+                """.format(**locals())
+
+            """
+                Create independent random values 
+                for each class that has a different row count than the target
+            """
+            random_targetclass_size_sample_number_gen_sql = """
+                SELECT 
+                    classes, 
+                    generate_series(1,target_class_size) AS _i, 
+                    ((random()*({class_counts}.class_count-1)+1)::int) 
+                    AS __row_no
+                FROM 
+                    (SELECT 
+                        {func_name}(class_count) AS target_class_size 
+                    FROM {class_counts}) 
+                        AS foo, 
+                        {class_counts} 
+                    WHERE {class_counts}.class_count != target_class_size
+                """.format(**locals())
+
+            """
+                Match random values with the row identifiers 
+            """
+            sample_otherclass_set = """
+                SELECT 
+                     {source_table_columns}
+                FROM 
+                    ({classwise_row_numbering_sql}) AS f1 
+                RIGHT JOIN
+                    ({random_targetclass_size_sample_number_gen_sql}) AS 
+                        f2
+                ON (f1.__row_no = f2.__row_no) AND
+                (f1.{class_col} = f2.classes)
+                """.format(**locals())
+
+            """
+                Find classes with target number of rows
+            """
+            targetclass_set = """
+                SELECT 
+                    {source_table_columns} 
+                FROM {source_table} 
+                WHERE {class_col} IN 
+                    (SELECT 
+                        classes AS target_class 
+                     FROM {class_counts} 
+                     WHERE class_count in 
+                        (SELECT {func_name}(class_count) FROM {class_counts}))
+                """.format(**locals())
+
+            """
+                Combine target and other sampled classes 
+            """
+            output_sql = """ 
+                CREATE TABLE {output_table} AS (
+                    SELECT {source_table_columns}
                     FROM 
-                        (SELECT 
-                            min(class_count) AS minority_class_size 
-                        FROM {class_counts}) 
-                            AS foo, 
-                            {class_counts} 
-                        WHERE {class_counts}.class_count != minority_class_size
-                    """.format(**locals())
-                """
-                    Match random values with the row identifiers 
-                """
-                undersample_otherclass_set = """
-                    SELECT 
-                         {source_table_columns}
-                    FROM 
-                        ({classwise_row_numbering_sql}) AS f1 
-                    RIGHT JOIN
-                        ({random_minorityclass_size_sample_number_gen_sql}) AS 
-                            f2
-                    ON (f1.__row_no = f2.__row_no) AND
-                    (f1.{class_col} = f2.classes)
-                    """.format(**locals())
-                """
-                    Find classes with minimum number of rows
-                """
-                minorityclass_set = """
+                        ({targetclass_set}) AS a
+                    UNION ALL 
+                        ({sample_otherclass_set}))
+                """.format(**locals())
+            plpy.execute(output_sql)
+         
+        if class_sizes.lower() == 'undersample' and not with_replacement:               
+            """
+                Random undersample without replacement.
+                Randomly order the rows and give a unique (per class) 
+                    identifier to each one.
+                Select rows that have identifiers under the target limit.
+            """
+            output_sql = """ 
+                CREATE TABLE {output_table} AS (
                     SELECT 
                         {source_table_columns} 
-                    FROM {source_table} 
-                    WHERE {class_col} IN 
+                    FROM
                         (SELECT 
-                            classes AS minority_class 
-                         FROM {class_counts} 
-                         WHERE class_count in 
-                            (SELECT min(class_count) FROM {class_counts}))
-                    """.format(**locals())
-                """
-                    Combine minority and other undersampled classes 
-                """
-                output_sql = """ 
-                    CREATE TABLE {output_table} AS (
-                        SELECT {source_table_columns}
-                        FROM 
-                            ({minorityclass_set}) AS a
-                        UNION ALL 
-                            ({undersample_otherclass_set}))
-                    """.format(**locals())
-                plpy.execute(output_sql)
-
-            plpy.execute("DROP VIEW IF EXISTS {0}".format(class_counts))
+                            *,
+                            row_number() OVER(PARTITION BY 
+                                {class_col} ORDER BY random()) 
+                                AS __row_no
+                        FROM {source_table}) AS foo 
+                    WHERE __row_no <= 
+                        (SELECT 
+                            MIN(class_count) 
+                         FROM {class_counts}))
+                """.format(**locals())
+            plpy.execute(output_sql)
+    
+        plpy.execute("DROP VIEW IF EXISTS {0}".format(class_counts))
     return
 
 def _validate_strs (source_table, output_table, class_col, class_sizes, 
@@ -181,9 +199,9 @@ def _validate_strs (source_table, output_table, class_col, class_sizes,
             """ table ({source_table}).""").format(**locals()))
 
     # Future options to be implemented
-    _assert(class_sizes in ('undersample'),
-        "Sample: Only undersampling is supported at the moment."
-        .format(**locals()))
+    # _assert(class_sizes in ('undersample', 'oversample'),
+    #     "Sample: Only undersampling is supported at the moment."
+    #     .format(**locals()))
 
     _assert(output_table_size is None,
         "output_table_size is not supported at the moment."
