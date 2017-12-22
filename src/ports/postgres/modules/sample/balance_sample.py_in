@@ -51,11 +51,11 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
             output_table_size, grouping_cols)
-        # TODO Check validate parameters 
+        # TODO Check validate parameters
         # more than one class in the class_col: uniform, under and oversample.
         # only fraction/numbers of obersvations can be less than what is requested.
-        # A:[0.0,1.0] Handling the rest of the classes .. + the total of the fractions of all the classes mentioned in [0.0,1.0 
-        *----------------------------------------+]
+        # A:[0.0,1.0] Handling the rest of the classes .. + the total of the fractions of all the classes mentioned in [0.0,1.0
+
         if class_sizes.lower() == 'oversample' and with_replacement is False:
             plpy.error("Sample: Cannot use without replacement with "
                         "oversampling.")
@@ -162,38 +162,62 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             """
                 Random undersample without replacement.
                 Randomly order the rows and give a unique (per class)
-                    identifier to each one.
+                identifier to each one.
                 Select rows that have identifiers under the target limit.
             """
-            # TODO:
-            distinct_class_labels = plpy.execute("""SELECT DISTINCT {class_col} 
-                                    AS labels FROM {source_table}
-                                    """.format(**locals()))['labels']
-            limit_bound = plpy.execute("""SELECT
-                                    MIN(class_count)
-                                    FROM {class_counts})""".format(**locals()))
-            minority_class = plpy.execute(""" SELECT classes as minority_class
-                                                FROM {class_counts} 
-                                                WHERE class_count =
-                                                    {limit_bound}
-                                        """.format(**locals()))['minority_class']
-            distinct_class_labels = [class for class in distinct_class_labels if class not in minority_class]
-            foo_table = unique_string(desp='foo')
-            start_selection_qry = """SELECT {source_table_columns} FROM
-                                (SELECT {source_table_columns} FROM {source_table} WHERE {class_col} = {dcl}
-                                ORDER BY random() LIMIT {limit_bound}) AS {foo_table} UNION """.format(dcl=distinct_class_labels[0], **locals())
-            union_qry = ' UNION '.join([""" (SELECT {source_table_columns} FROM {source_table} WHERE {class_col} = '{val}'  ORDER BY random()  LIMIT {limit_bound}) """.format(
-                                          **locals(), val) for val in distinct_class_labels[1:]])
+            distinct_class_labels = plpy.execute("""
+                SELECT array_agg(DISTINCT {class_col}) AS labels
+                FROM {source_table}
+                """.format(**locals()))[0]['labels']
+            limit_bound = plpy.execute("""
+                SELECT MIN(class_count) AS min
+                FROM {class_counts}""".format(**locals()))[0]['min']
 
-            min_class_tuple = tuple(minority_class)
-            minority_sql = """ UNION SELECT {source_table_columns} FROM {source_table} WHERE {class_col} IN {min_class_tuple} """.format(**locals())
+            minority_class = plpy.execute("""
+                SELECT array_agg(classes) as minority_class
+                FROM {class_counts}
+                WHERE class_count = {limit_bound}
+                """.format(**locals()))[0]['minority_class']
+
+            distinct_class_labels = [cl for cl in distinct_class_labels
+                                        if cl not in minority_class]
+
+            foo_table = unique_string(desp='foo')
+            start_selection_qry = """
+                SELECT {source_table_columns} FROM (
+                    SELECT {source_table_columns}
+                    FROM {source_table}
+                    WHERE {class_col} = {dcl}
+                    ORDER BY random()
+                    LIMIT {limit_bound}
+                    ) AS {foo_table}
+                UNION """.format(dcl=distinct_class_labels[0], **locals())
+
+            union_qry = ' UNION '.join(""" (
+                SELECT {source_table_columns}
+                FROM {source_table}
+                WHERE {class_col} = '{val}'
+                ORDER BY random()
+                LIMIT {limit_bound})
+                """.format(source_table_columns=source_table_columns,
+                            source_table=source_table,
+                            class_col=class_col,
+                            limit_bound=limit_bound,
+                            val=val) for val in distinct_class_labels[1:])
+
+            min_class_tuple = "(" + ",".join([str(a) for a in minority_class]) + ")"
+            plpy.info(min_class_tuple)
+            minority_sql = """ UNION
+                SELECT {source_table_columns}
+                FROM {source_table}
+                WHERE {class_col} IN {min_class_tuple} """.format(**locals())
+
             output_sql = """
                 CREATE TABLE {output_table} AS (
                     {start_selection_qry}
                     {union_qry}
-                    {minority_sql}
-                """
-            plpy.info(output_sql)
+                    {minority_sql} )""".format(**locals())
+
             plpy.execute(output_sql)
 
         plpy.execute("DROP VIEW IF EXISTS {0}".format(class_counts))

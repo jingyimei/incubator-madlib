@@ -79,29 +79,29 @@ INSERT INTO "TEST_s" VALUES
 --- Test for random undersampling without replacement
 DROP TABLE IF EXISTS out_s;
 SELECT balance_sample('"TEST_s"', 'out_s', 'gr1', 'undersample', NULL, NULL, FALSE);
-SELECT assert(count(*) = 0, 'Wrong number of samples') FROM
+SELECT assert(count(*) = 0, 'Wrong number of samples on undersampling gr1') FROM
         (SELECT gr1, count(*) AS c FROM out_s GROUP BY gr1) AS foo WHERE foo.c != 3;
 
 DROP TABLE IF EXISTS out_s1;
 SELECT balance_sample('"TEST_s"', 'out_s1', 'gr2', 'undersample', NULL, NULL, FALSE);
-SELECT assert(count(*) = 0, 'Wrong number of samples') FROM 
+SELECT assert(count(*) = 0, 'Wrong number of samples on undersampling gr2') FROM
         (SELECT gr2, count(*) AS c FROM out_s1 GROUP BY gr2) AS foo WHERE foo.c != 3;
 
 --- Test for random undersampling with replacement
 DROP TABLE IF EXISTS out_sr2;
 SELECT balance_sample('"TEST_s"', 'out_sr2', 'gr1', 'undersample', NULL, NULL, TRUE);
-SELECT assert(count(*) = 0, 'Wrong number of samples') FROM 
+SELECT assert(count(*) = 0, 'Wrong number of samples on undersampling with replacement on gr1') FROM
         (SELECT gr1, count(*) AS c FROM out_sr2 GROUP BY gr1) AS foo WHERE foo.c != 3;
 
 DROP TABLE IF EXISTS out_sr3;
 SELECT balance_sample('"TEST_s"', 'out_sr3', 'gr2', 'undersample', NULL, NULL, TRUE);
-SELECT assert(count(*) = 0, 'Wrong number of samples') FROM 
+SELECT assert(count(*) = 0, 'Wrong number of samples on undersampling with replacement on gr2') FROM
         (SELECT gr2, count(*) AS c FROM out_sr3 GROUP BY gr2) AS foo WHERE foo.c != 3;
 
---- Test for random oversampling 
+--- Test for random oversampling
 DROP TABLE IF EXISTS out_or3;
 SELECT balance_sample('"TEST_s"', 'out_or3', 'gr1', 'oversample', NULL, NULL);
-SELECT assert(count(*) = 0, 'Wrong number of samples') FROM
+SELECT assert(count(*) = 0, 'Wrong number of samples on oversampling') FROM
         (SELECT gr1, count(*) AS c FROM out_or3 GROUP BY gr1) AS foo WHERE foo.c != 18;
 
 
