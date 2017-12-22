@@ -36,9 +36,10 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
     Args:
         @param source_table       Input table name.
         @param output_table       Output table name.
-        @param class_col          Name of the column containing the class to be 
+        @param class_col          Name of the column containing the class to be
                                   balanced.
-        @param class_size         The columns to include in the output.
+        @param class_size         Parameter to define the size of the different
+                                  class values.
         @param output_table_size  Desired size of the output data set.
         @param grouping_cols      The columns columns that defines the grouping.
         @param with_replacement   The sampling method.
@@ -47,10 +48,14 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
     with MinWarning("warning"):
 
         class_counts = unique_string(desp='class_counts')
-        
-        _validate_strs(source_table, output_table, class_col, class_sizes, 
-            output_table_size, grouping_cols)
 
+        _validate_strs(source_table, output_table, class_col, class_sizes,
+            output_table_size, grouping_cols)
+        # TODO Check validate parameters 
+        # more than one class in the class_col: uniform, under and oversample.
+        # only fraction/numbers of obersvations can be less than what is requested.
+        # A:[0.0,1.0] Handling the rest of the classes .. + the total of the fractions of all the classes mentioned in [0.0,1.0 
+        *----------------------------------------+]
         if class_sizes.lower() == 'oversample' and with_replacement is False:
             plpy.error("Sample: Cannot use without replacement with "
                         "oversampling.")
@@ -60,12 +65,12 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             Frequency table for classes
         """
         plpy.execute(""" CREATE VIEW {class_counts} AS (
-                         SELECT 
-                            {class_col} AS classes, 
+                         SELECT
+                            {class_col} AS classes,
                             count(*) AS class_count
-                         FROM {source_table} 
+                         FROM {source_table}
                             {grp_by})
-                     """.format(**locals())) 
+                     """.format(**locals()))
 
         if class_sizes.lower() == 'oversample':
             with_replacement = True
@@ -83,7 +88,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 Create row identifiers for each row wrt the class
             """
             classwise_row_numbering_sql = """
-                SELECT 
+                SELECT
                     *,
                     row_number() OVER(PARTITION BY {class_col})
                     AS __row_no
@@ -92,34 +97,34 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 """.format(**locals())
 
             """
-                Create independent random values 
+                Create independent random values
                 for each class that has a different row count than the target
             """
             random_targetclass_size_sample_number_gen_sql = """
-                SELECT 
-                    classes, 
-                    generate_series(1,target_class_size) AS _i, 
-                    ((random()*({class_counts}.class_count-1)+1)::int) 
+                SELECT
+                    classes,
+                    generate_series(1,target_class_size) AS _i,
+                    ((random()*({class_counts}.class_count-1)+1)::int)
                     AS __row_no
-                FROM 
-                    (SELECT 
-                        {func_name}(class_count) AS target_class_size 
-                    FROM {class_counts}) 
-                        AS foo, 
-                        {class_counts} 
+                FROM
+                    (SELECT
+                        {func_name}(class_count) AS target_class_size
+                    FROM {class_counts})
+                        AS foo,
+                        {class_counts}
                     WHERE {class_counts}.class_count != target_class_size
                 """.format(**locals())
 
             """
-                Match random values with the row identifiers 
+                Match random values with the row identifiers
             """
             sample_otherclass_set = """
-                SELECT 
+                SELECT
                      {source_table_columns}
-                FROM 
-                    ({classwise_row_numbering_sql}) AS f1 
+                FROM
+                    ({classwise_row_numbering_sql}) AS f1
                 RIGHT JOIN
-                    ({random_targetclass_size_sample_number_gen_sql}) AS 
+                    ({random_targetclass_size_sample_number_gen_sql}) AS
                         f2
                 ON (f1.__row_no = f2.__row_no) AND
                 (f1.{class_col} = f2.classes)
@@ -129,59 +134,72 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 Find classes with target number of rows
             """
             targetclass_set = """
-                SELECT 
-                    {source_table_columns} 
-                FROM {source_table} 
-                WHERE {class_col} IN 
-                    (SELECT 
-                        classes AS target_class 
-                     FROM {class_counts} 
-                     WHERE class_count in 
+                SELECT
+                    {source_table_columns}
+                FROM {source_table}
+                WHERE {class_col} IN
+                    (SELECT
+                        classes AS target_class
+                     FROM {class_counts}
+                     WHERE class_count in
                         (SELECT {func_name}(class_count) FROM {class_counts}))
                 """.format(**locals())
 
             """
-                Combine target and other sampled classes 
+                Combine target and other sampled classes
             """
-            output_sql = """ 
+            output_sql = """
                 CREATE TABLE {output_table} AS (
                     SELECT {source_table_columns}
-                    FROM 
+                    FROM
                         ({targetclass_set}) AS a
-                    UNION ALL 
+                    UNION ALL
                         ({sample_otherclass_set}))
                 """.format(**locals())
             plpy.execute(output_sql)
-         
-        if class_sizes.lower() == 'undersample' and not with_replacement:               
+
+        if class_sizes.lower() == 'undersample' and not with_replacement:
             """
                 Random undersample without replacement.
-                Randomly order the rows and give a unique (per class) 
+                Randomly order the rows and give a unique (per class)
                     identifier to each one.
                 Select rows that have identifiers under the target limit.
             """
-            output_sql = """ 
+            # TODO:
+            distinct_class_labels = plpy.execute("""SELECT DISTINCT {class_col} 
+                                    AS labels FROM {source_table}
+                                    """.format(**locals()))['labels']
+            limit_bound = plpy.execute("""SELECT
+                                    MIN(class_count)
+                                    FROM {class_counts})""".format(**locals()))
+            minority_class = plpy.execute(""" SELECT classes as minority_class
+                                                FROM {class_counts} 
+                                                WHERE class_count =
+                                                    {limit_bound}
+                                        """.format(**locals()))['minority_class']
+            distinct_class_labels = [class for class in distinct_class_labels if class not in minority_class]
+            foo_table = unique_string(desp='foo')
+            start_selection_qry = """SELECT {source_table_columns} FROM
+                                (SELECT {source_table_columns} FROM {source_table} WHERE {class_col} = {dcl}
+                                ORDER BY random() LIMIT {limit_bound}) AS {foo_table} UNION """.format(dcl=distinct_class_labels[0], **locals())
+            union_qry = ' UNION '.join([""" (SELECT {source_table_columns} FROM {source_table} WHERE {class_col} = '{val}'  ORDER BY random()  LIMIT {limit_bound}) """.format(
+                                          **locals(), val) for val in distinct_class_labels[1:]])
+
+            min_class_tuple = tuple(minority_class)
+            minority_sql = """ UNION SELECT {source_table_columns} FROM {source_table} WHERE {class_col} IN {min_class_tuple} """.format(**locals())
+            output_sql = """
                 CREATE TABLE {output_table} AS (
-                    SELECT 
-                        {source_table_columns} 
-                    FROM
-                        (SELECT 
-                            *,
-                            row_number() OVER(PARTITION BY 
-                                {class_col} ORDER BY random()) 
-                                AS __row_no
-                        FROM {source_table}) AS foo 
-                    WHERE __row_no <= 
-                        (SELECT 
-                            MIN(class_count) 
-                         FROM {class_counts}))
-                """.format(**locals())
+                    {start_selection_qry}
+                    {union_qry}
+                    {minority_sql}
+                """
+            plpy.info(output_sql)
             plpy.execute(output_sql)
-    
+
         plpy.execute("DROP VIEW IF EXISTS {0}".format(class_counts))
     return
 
-def _validate_strs (source_table, output_table, class_col, class_sizes, 
+def _validate_strs (source_table, output_table, class_col, class_sizes,
             output_table_size, grouping_cols):
 
     _assert(table_exists(source_table),
@@ -231,10 +249,10 @@ def balance_sample_help(schema_madlib, message, **kwargs):
 -----------------------------------------------------------------------
                             SUMMARY
 -----------------------------------------------------------------------
-Given a table with varying set of records for each class label, 
-this function will create an output table with a varying types (by 
-default: uniform) of sampling distributions of each class label. It is 
-possible to use with or without replacement sampling methods, specify 
+Given a table with varying set of records for each class label,
+this function will create an output table with a varying types (by
+default: uniform) of sampling distributions of each class label. It is
+possible to use with or without replacement sampling methods, specify
 different proportions of each class, multiple grouping columns and/or
 output table size.
 
@@ -259,18 +277,18 @@ whole table is a single strata.
     output_table      TEXT,     -- Output table name.
     class_col         TEXT,     -- Name of column containing the class to be
                                 -- balanced.
-    class_size        TEXT,     -- (Default: NULL) The columns to include in
-                                -- the output.
-    output_table_size INTEGER,  -- (Default: NULL) Desired size of the output 
+    class_size        TEXT,     -- (Default: NULL) Parameter to define the size
+                                -- of the different class values.
+    output_table_size INTEGER,  -- (Default: NULL) Desired size of the output
                                 -- data set.
-    grouping_cols     TEXT,     -- (Default: NULL) The columns columns that 
+    grouping_cols     TEXT,     -- (Default: NULL) The columns columns that
                                 -- defines the grouping.
     with_replacement  BOOLEAN   -- (Default: FALSE) The sampling method.
 
 If class_size is NULL, the source table is uniformly sampled.
 
-If output_table_size is NULL, the resulting output table size will depend on 
-the settings for the ‘class_size’ parameter. It is ignored if ‘class_size’ 
+If output_table_size is NULL, the resulting output table size will depend on
+the settings for the ‘class_size’ parameter. It is ignored if ‘class_size’
 parameter is set to either ‘oversample’ or ‘undersample’.
 
 If grouping_cols is NULL, the whole table is treated as a single group and
