@@ -84,12 +84,12 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 source_table, class_sizes, output_table_size)
 
 
-        # class_sizes = '3:8,5:4,4:8'
+        # class_sizes = '3:8,5:4,4:28'
         if class_sizes.find(':'):
-            from collections import defaultdict()
-            desired_sampling = defaultdict(str)
+            desired_sampling = defaultdict(lambda : None)
+            desired_sampling
             for x in class_sizes.split(','):
-                desired_sampling[x[0]] = int(x[2])
+                desired_sampling[x.split(':')[0]] = int(x.split(':')[1])
             # not in number, ratios
             ## assuming the class counts of all classes are available as
             ## select array_agg(concat_ws(':',classes::text,class_count::text)) as actual_counts from class_counts;
@@ -99,22 +99,21 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             #TODO: provide actual plpy.execution implementation to get the following value
             substituting_dummy_actual_counts = '{2:7,6:7,3:3,5:7,1:18,4:3}'
             actual_counts = _convert_string_to_arrays(substituting_dummy_actual_counts)
-            actual_sampling = defaultdict(str)
-            for x in actual_counts:
-                actual_sampling[x.split(':')[0]] = int(x.split(':')[0])
+actual_sampling = {}
+for x in actual_counts:
+    actual_sampling[x.split(':')[0]] = int(x.split(':')[1])
 
             if not output_table_size:
                 # return remaining classes as is.
-                oversample_class_size = 
-                oversample_class_size = [(x[0],desired_sampling[x[0]]) 
-                                    for x in actual_counts if x.split(':')[1] < desired_sampling[x[0]] 
-                                    and desired_sampling[x[0]]]
-                undersample_class_size = [(x[0],desired_sampling[x[0]]) 
-                                    for x in actual_counts if x.split(':')[1] > desired_sampling[x[0]]
-                                    and desired_sampling[x[0]]]
-                nosample_class_size = [(x[0],desired_sampling[x[0]]) 
-                                    for x in actual_counts if x.split(':')[1] == desired_sampling[x[0]]
-                                    or not desired_sampling[x[0]]]    
+for label, actual_count in actual_sampling.iteritems():
+    clas_count = desired_sampling[label]
+    if not clas_count:
+        if clas_count > actual_count:
+            oversample_class_size[label] = clas_count
+        elif clas_count < actual_count:
+            undersample_class_size[label] = clas_count
+    else:
+        nosample_class_size[label] = actual_count   
             else:
                 # Resample classes to desired values, 
                 # divide remaining values evenly 
