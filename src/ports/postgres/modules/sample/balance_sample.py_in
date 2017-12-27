@@ -50,15 +50,13 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         class_counts = unique_string(desp='class_counts')
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
-            output_table_size, grouping_cols)
+            output_table_size, grouping_cols, with_replacement)
         # TODO Check validate parameters
         # more than one class in the class_col: uniform, under and oversample.
         # only fraction/numbers of obersvations can be less than what is requested.
-        # A:[0.0,1.0] Handling the rest of the classes .. + the total of the fractions of all the classes mentioned in [0.0,1.0
+        # A:[0.0,1.0] Handling the rest of the classes .. + the total of the fractions of all 
+        #the classes mentioned in [0.0,1.0
 
-        if class_sizes.lower() == 'oversample' and with_replacement is False:
-            plpy.error("Sample: Cannot use without replacement with "
-                        "oversampling.")
         source_table_columns = ','.join(get_cols(source_table))
         grp_by = "GROUP BY {0}".format(class_col)
         """
@@ -72,17 +70,78 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                             {grp_by})
                      """.format(**locals()))
 
+        # Desired xsample_class_size = {'class_1': class_counts, 'class_2': class_counts}
+        nosample_class_size, oversample_class_size, undersample_class_size = {},{},{}
+
+        if class_sizes.lower() == 'uniform':
+            """                  class_sizes
+            -----------------------------------------------------------------------
+            {"nosample:{2:7,6:7}","oversample:{3:8,5:8,4:8}","undersample:{1:7}"}
+            following function makes use of class_counts.
+            #TODO have the folling xsample_class_sizes as dicts
+            """
+            nosample_class_size, oversample_class_size, undersample_class_size = _compute_uniform_class_sizes(
+                source_table, class_sizes, output_table_size)
+
+
+        # class_sizes = '3:8,5:4,4:8'
+        if class_sizes.find(':'):
+            from collections import defaultdict()
+            desired_sampling = defaultdict(str)
+            for x in class_sizes.split(','):
+                desired_sampling[x[0]] = int(x[2])
+            # not in number, ratios
+            ## assuming the class counts of all classes are available as
+            ## select array_agg(concat_ws(':',classes::text,class_count::text)) as actual_counts from class_counts;
+            #          actual_counts
+            # ----------------------------
+            # {2:7,6:7,3:3,5:7,1:18,4:3}
+            #TODO: provide actual plpy.execution implementation to get the following value
+            substituting_dummy_actual_counts = '{2:7,6:7,3:3,5:7,1:18,4:3}'
+            actual_counts = _convert_string_to_arrays(substituting_dummy_actual_counts)
+            actual_sampling = defaultdict(str)
+            for x in actual_counts:
+                actual_sampling[x.split(':')[0]] = int(x.split(':')[0])
+
+            if not output_table_size:
+                # return remaining classes as is.
+                oversample_class_size = 
+                oversample_class_size = [(x[0],desired_sampling[x[0]]) 
+                                    for x in actual_counts if x.split(':')[1] < desired_sampling[x[0]] 
+                                    and desired_sampling[x[0]]]
+                undersample_class_size = [(x[0],desired_sampling[x[0]]) 
+                                    for x in actual_counts if x.split(':')[1] > desired_sampling[x[0]]
+                                    and desired_sampling[x[0]]]
+                nosample_class_size = [(x[0],desired_sampling[x[0]]) 
+                                    for x in actual_counts if x.split(':')[1] == desired_sampling[x[0]]
+                                    or not desired_sampling[x[0]]]    
+            else:
+                # Resample classes to desired values, 
+                # divide remaining values evenly 
+                # (total_size - Sigma(sampled_sizes))/(total_size-counts_of_sampled_classes) 
+                total_desired_sample_size = sum([int(i) for i in desired_sampling.values()])
+
+
+
         if class_sizes.lower() == 'oversample':
             with_replacement = True
             func_name = 'max'
         else:
-            if with_replacement is None:
-                with_replacement = False
-            func_name = 'min'
+            # following is strictly undersampling case.
+            # if with_replacement is None:
+            #     # with_replacement is False by default
+            #     # continue undersampling without replacement
+            #     with_replacement = False
+            if with_replacement:
+                # undersampling with replacement.
+                func_name = 'min'
+
 
         if with_replacement:
             """
                 Random sample with replacement.
+                Undersample will have func_name set to min
+                Oversample will have func_name set to max.
             """
             """
                 Create row identifiers for each row wrt the class
@@ -223,8 +282,21 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         plpy.execute("DROP VIEW IF EXISTS {0}".format(class_counts))
     return
 
+def _compute_uniform_class_sizes(source_table, class_sizes, output_table_size):
+    sample_string = '{"nosample:{5:7}","oversample:{2:8,6:8,3:7,4:7}","undersample:{1:8}"}'
+    #convert to sample_string to below format
+    #a = {'nosample':{2:7,6:7},'oversample':{3:8,5:8,4:8},'undersample':{1:7}}
+    import yaml
+    d = yaml.load('{'+sample_string.replace('{"','"').replace('"}','"').replace('e:','e":').replace(':{',':"{')+'}')
+    return _convert_string_to_arrays(d['nosample']), _convert_string_to_arrays(d['oversample']), _convert_string_to_arrays(d['undersample'])
+
+
+def _convert_string_to_arrays(strng):
+    return strng.replace('}','').replace('{','').split(',')
+
+
 def _validate_strs (source_table, output_table, class_col, class_sizes,
-            output_table_size, grouping_cols):
+            output_table_size, grouping_cols, with_replacement):
 
     _assert(table_exists(source_table),
         "Sample: Source table ({source_table}) is missing!".format(**locals()))
@@ -239,6 +311,18 @@ def _validate_strs (source_table, output_table, class_col, class_sizes,
     _assert(columns_exist_in_table(source_table, [class_col]),
         ("""Sample: Column {class_col} does not exist in"""+
             """ table ({source_table}).""").format(**locals()))
+
+    if class_sizes.lower() == 'oversample' and with_replacement is False:
+        plpy.error("Sample: Cannot use without replacement with "
+                    "oversampling.")
+
+    if class_sizes.lower() == 'oversample' and output_table_size:
+        plpy.error("Sample: Cannot set output_table_size with "
+                    "oversampling.")
+
+    if class_sizes.lower() == 'undersample' and output_table_size:
+        plpy.error("Sample: Cannot set output_table_size with "
+                    "undersampling.")
 
     # Future options to be implemented
     # _assert(class_sizes in ('undersample', 'oversample'),
