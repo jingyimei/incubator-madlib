@@ -276,25 +276,18 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             #plpy.info(output_sql)
             plpy.execute(output_sql)
 
-        nosample_classset_sql = ''
-        if nosampling:
-            nosample_classset_sql = """
-                SELECT
-                    {source_table_columns}
-                FROM {source_table}
-                WHERE {class_col}::text IN
-                    (SELECT
-                        classes 
-                     FROM {desired_sample_per_class}
-                     WHERE category like 'nosample')
-                        """.format(**locals())
 
-        # if oversampling:
-        #     """
-        #             Combine target and other over sampled classes
-        #             sample_otherclass_set
-        #         """
-        #     oversample_classset_sql = sample_otherclass_set
+        nosample_classset_sql = """
+            SELECT
+                {source_table_columns}
+            FROM {source_table}
+            WHERE {class_col}::text IN
+                (SELECT
+                    classes 
+                 FROM {desired_sample_per_class}
+                 WHERE category like 'nosample')
+                    """.format(**locals())
+
         undersampling_classset_sql = ''
         if len(undersampling) > 0:
             # use union all to presenve the repeated samples of oversamples.
@@ -311,7 +304,14 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                             clas=clas) for clas, clas_limit in undersampling.iteritems())
             undersampling_classset_sql = ' UNION ALL ' + undersampling_classset_sql
 
-        if oversampling and nosampling:
+        oversampling_classset_sql = ''
+        if oversampling:
+            oversampling_classset_sql = """ 
+                    UNION ALL
+                        ({sample_otherclass_set})
+                        """.format(**locals())
+
+        if (oversampling or len(undersampling) > 0):
             """
                 Combine target and other over sampled classes
                 sample_otherclass_set
@@ -321,15 +321,11 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     SELECT {source_table_columns}
                     FROM
                         ({nosample_classset_sql}) AS a
-                    UNION ALL
-                        -- oversampling 
-                        ({sample_otherclass_set})
-                    -- undersampling
+                    {oversampling_classset_sql}
                     {undersampling_classset_sql}) 
                 """.format(**locals())
-            #plpy.info(output_sql)
+            plpy.info(output_sql)
             plpy.execute(output_sql)
-
 
         plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(class_counts))
         plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(desired_sample_per_class))
