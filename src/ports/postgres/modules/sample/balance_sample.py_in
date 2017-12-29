@@ -52,8 +52,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         desired_sample_per_class = unique_string(desp='desired_sample_per_class')
         desired_counts = unique_string(desp='desired_counts')
 
-        # if class_sizes.strip().lower() not in ('null', ''):
-        #     class_sizes = 'uniform'
+        if not class_sizes or class_sizes.strip().lower() in ('null', ''):
+            class_sizes = 'uniform'
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
             output_table_size, grouping_cols, with_replacement)
