@@ -74,6 +74,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 comman-delimited list of class_sizes
                 and/or output_table_size
             """
+            class_sizes = _check_formatting_and_values(class_sizes, source_table, 
+                            class_col, output_table_size)
             temp_views.extend(_create_desired_and_actual_sampling_views(class_counts, 
                     desired_sample_per_class, desired_counts
                     , source_table, output_table, class_col 
@@ -350,6 +352,94 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(temp_view))
 
     return
+
+
+
+class UniqueDict(dict):
+    def __setitem__(self, key, value):
+        if key not in self:
+            # float(value).is_integer() ensures only whole numbers.
+            if (value > 0.0 or value < 1.0) or (value >= 1.0 and float(value).is_integer()):
+                dict.__setitem__(self, key, value)
+            else:
+                plpy.error("Sample: Value should be between (0.0,1.0) or value is a whole number greater then 1")
+                #raise KeyError("Sample: Value should be between (0.0,1.0) or value is a whole number greater then 1")
+        else:
+            plpy.error("Sample: Same Key specified multiple times in class_sizes")
+            #raise ValueError("Sample: Same Key specified multiple times in class_sizes")
+
+
+def __check_value_type(value, firstValueType):
+    valueType = 'other' if firstValueType is None else firstValueType
+    import re
+    if re.match("^\d+?\.\d+?$", value) is not None and not float(value).is_integer():
+        valueType = float
+    elif (re.match(r"[-+]?\d+$", value) is not None):
+        valueType = int
+    else:
+        valueType = 'other'
+        #plpy.error("Sample: Specify either fractions or whole number values for each class.")
+        raise ValueError("Sample: Specify either fractions or whole number values for each class.")
+    return valueType
+
+def _check_formatting_and_values(class_sizes, source_table, class_col,
+                    output_table_size):
+
+    mod_class_sizes = ''
+    # errors on same classes e.g class_sizes = '3:4,5:6,10:4,6:0.4,5:0.4' 
+    # errors on different value types (numeric and fractions) class_sizes = '3:4,5:6,10:4,6:0.4' errors on value?
+    # ensure keys in the class_col.
+    # class_sizes = '3:4,5:6,10:4,6:4,5:4' # error duplicate keys
+    # class_sizes = '3:0.4,5:0.6,10:4,6:0.4,5:0.4' # must have same type of values
+    # class_sizes = '3:a,5:b' # error values are string
+    #class_sizes = '3:0.2,4:0.3,6:0.5'
+    firstValue = class_sizes.split(',')[0].split(':')[1].strip()
+
+    try:
+        float(firstValue)
+    except ValueError:
+        # plpy.error("Sample: Value is neither a float or integer")
+        raise ValueError("Sample: Value is neither a float or integer")
+
+    firstValueType = __check_value_type(firstValue, None)
+
+    cs_dict = UniqueDict(defaultdict())
+    cs_dict[class_sizes.split(',')[0].split(':')[0].strip()] = firstValueType(firstValue)
+
+    for x in class_sizes.split(',')[1:]:
+        val = x.split(':')
+        if __check_value_type(val[1].strip(), firstValueType) != firstValueType:
+            #plpy.error("Sample: Specify either fractions or whole number values for ALL classes.")
+            raise ValueError("Sample: Specify either fractions or whole number values for ALL classes.")
+        cs_dict[val[0].strip()] = firstValueType(val[1].strip())
+
+    all_classes = cs_dict.keys()
+    if len(all_classes) > 1:
+        all_classes = str(all_classes)[1:-1]
+
+    res = plpy.execute("""
+        select unnest(ARRAY[{all_classes}]) except select distinct({class_col}::text) from {source_table}
+        """.format(**locals()))
+    if res.nrows() > 0:
+        plpy.error("""Sample: Class values do not exist in {class_col}""".format(**locals()))
+
+    if (firstValueType == 'float'):
+        if sum(cs_dict.values()) <= 1.0:
+            
+            total_table_size = plpy.execute("""
+                                select count(*) as total from {source_table}
+                                """.format(**locals()))[0]['total']
+            if not output_table_size or output_table_size.strip().lower() in ('null', ''):
+                total_table_size = output_table_size
+            class_sizes = ''
+            
+            for clas, val in cs_dict.iteritems():
+                class_sizes += clas + ':' + str(int(10 * val)) + ','
+            return class_size
+        else:
+            plpy.error("Sample: Fractions total is more than 1.0")
+    else:
+        return class_sizes
 
 # create frqguency distribution of source table
 def _create_frequency_distribution(class_counts, source_table, class_col):
