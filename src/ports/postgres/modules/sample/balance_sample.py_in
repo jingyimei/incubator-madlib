@@ -290,7 +290,9 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         undersampling_classset_sql = ''
         if len(undersampling) > 0:
-            # use union all to presenve the repeated samples of oversamples.
+            """
+                Use union all to presenve the repeated samples of oversamples.
+            """
             undersampling_classset_sql = ' UNION ALL'.join(""" 
                 (SELECT {source_table_columns}
                 FROM {source_table}
