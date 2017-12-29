@@ -52,23 +52,48 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         desired_sample_per_class = unique_string(desp='desired_sample_per_class')
         desired_counts = unique_string(desp='desired_counts')
 
+        # if class_sizes.strip().lower() not in ('null', ''):
+        #     class_sizes = 'uniform'
+
         _validate_strs(source_table, output_table, class_col, class_sizes,
             output_table_size, grouping_cols, with_replacement)
 
         source_table_columns = ','.join(get_cols(source_table))
         grp_by = "GROUP BY {0}".format(class_col)
 
+        _create_frequency_distribution(class_counts, source_table, class_col)
+        temp_views = [class_counts]
+
         """
             Views for actual and desired samplecounts of classes 
         """
-        extra_class_samples = _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_class, desired_counts
-            , source_table, output_table, class_col, class_sizes, output_table_size)
+        sampling_with_comma_delimited_class_sizes = class_sizes.find(':') > 0
+        if sampling_with_comma_delimited_class_sizes:
+            """                  
+                Compute sample sizes based on 
+                comman-delimited list of class_sizes
+                and/or output_table_size
+            """
+            temp_views.extend(_create_desired_and_actual_sampling_views(class_counts, 
+                    desired_sample_per_class, desired_counts
+                    , source_table, output_table, class_col 
+                    , class_sizes, output_table_size))
 
+        if class_sizes.lower() == 'uniform':
+            """                  
+                Compute sample sizes based on 
+                uniform distribution of class sizes
+            """
+            temp_views.extend(_compute_uniform_class_sizes(
+                class_counts, desired_sample_per_class, desired_counts
+                , source_table, output_table, class_col, class_sizes, 
+                output_table_size))
         # Desired xsample_class_size = {'class_1': class_counts, 'class_2': class_counts}
         oversampling, nosampling = False,  False
         undersampling = defaultdict(str)
+
         # class_sizes = '3:8,5:4,4:28'
-        if class_sizes.find(':') > 0:
+        if sampling_with_comma_delimited_class_sizes or class_sizes.lower() == 'uniform':
             oversampling = plpy.execute("""
                 select * from {desired_sample_per_class} where category = 'oversample' 
                 """.format(**locals())).nrows() > 0
@@ -88,18 +113,10 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             nosampling = plpy.execute("""
                 select * from {desired_sample_per_class} where category = 'nosample' 
                 """.format(**locals())).nrows() > 0
-        # plpy.info(oversampling)
-        # plpy.info(undersampling)
-        # plpy.info(nosampling)
-        if class_sizes.lower() == 'uniform':
-            """                  class_sizes
-            -----------------------------------------------------------------------
-            {"nosample:{2:7,6:7}","oversample:{3:8,5:8,4:8}","undersample:{1:7}"}
-            following function makes use of class_counts.
-            #TODO have the folling xsample_class_sizes as dicts
-            """
-            nosample_class_size, oversample_class_size, undersample_class_size = _compute_uniform_class_sizes(
-                source_table, class_sizes, output_table_size)
+        
+        plpy.info(oversampling)
+        plpy.info(undersampling)
+        plpy.info(nosampling)
 
         if class_sizes.lower() == 'oversample':
             with_replacement = True
@@ -142,7 +159,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 random_targetclass_size_sample_number_gen_sql = """
                 SELECT
                     {desired_sample_per_class}.classes,
-                    generate_series(1,sample_class_size) AS _i,
+                    generate_series(1, sample_class_size::int) AS _i,
                     ((random()*({class_counts}.class_count-1)+1)::int)
                     AS __row_no
                 FROM
@@ -156,7 +173,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 random_targetclass_size_sample_number_gen_sql = """
                 SELECT
                     classes,
-                    generate_series(1,target_class_size) AS _i,
+                    generate_series(1, target_class_size::int) AS _i,
                     ((random()*({class_counts}.class_count-1)+1)::int)
                     AS __row_no
                 FROM
@@ -329,16 +346,13 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             plpy.info(output_sql)
             plpy.execute(output_sql)
 
-        plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(class_counts))
-        plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(desired_counts))
-        plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(desired_sample_per_class))
-        if extra_class_samples:
-            plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(extra_class_samples))
+        for temp_view in temp_views:
+            plpy.execute("DROP VIEW IF EXISTS {0} cascade".format(temp_view))
+
     return
 
-# Function to create frequency counts and desired counts table.
-def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_class, desired_counts
-            , source_table, output_table, class_col, class_sizes, output_table_size):
+# create frqguency distribution of source table
+def _create_frequency_distribution(class_counts, source_table, class_col):
 
     grp_by = "GROUP BY {0}".format(class_col)
     """
@@ -350,33 +364,66 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                     count(*) AS class_count
                  FROM {source_table}
                     {grp_by})
-             """.format(**locals()))
+             """.format(**locals()))    
 
-    if class_sizes.find(':') > 0:
+# Function to create frequency counts and desired counts table.
+def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_class, desired_counts
+            , source_table, output_table, class_col, class_sizes, output_table_size):
 
-        if len(class_sizes.split(',')) > 1:
-            values = '\',\''.join(class_sizes.split(','))
-        else:
-            values = class_sizes.split(',')[0] 
-        create_desired_counts_sql = """
-            create view {desired_counts} as (
-            select val[1]::text as desired_classes,
-                   val[2]::int as desired_values 
-            from 
-                (select regexp_split_to_array(unnest(ARRAY['{values}']),E':') as val) 
-                ---(select regexp_split_to_array(unnest(ARRAY[['3:9','5:5','4:5']]),E':') as val)
-            as foo
+    if len(class_sizes.split(',')) > 1:
+        values = '\',\''.join(class_sizes.split(','))
+    else:
+        values = class_sizes.split(',')[0] 
+
+    create_desired_counts_sql = """
+        create view {desired_counts} as (
+        select val[1]::text as desired_classes,
+               val[2]::int as desired_values 
+        from 
+            (select regexp_split_to_array(unnest(ARRAY['{values}']),E':') as val) 
+            ---(select regexp_split_to_array(unnest(ARRAY[['3:9','5:5','4:5']]),E':') as val)
+        as foo
+        )
+    """.format(**locals())
+    plpy.execute(create_desired_counts_sql)
+
+    extra_class_samples = ''
+    if output_table_size:
+        
+        extra_class_samples = _sample_extra_classes_uniformly_per_output_table_size(
+            class_counts, desired_counts, output_table_size)
+        
+        desired_sample_per_class_sql = """
+        create view {desired_sample_per_class} as (
+            select 
+                    classes,
+                    desired_values::int as sample_class_size,
+                    class_count as actual_class_size,
+                    case 
+                      when (desired_values - class_count) = 0 then 'nosample'
+                      when (desired_values - class_count) > 0 then 'oversample' else 'undersample' 
+                    end  as category
+            from (
+                select  
+                        classes,
+                        case (select 1 where desired_values is null)
+                            when 1 then extra_values
+                            else desired_values
+                        end as desired_values,
+                        class_count 
+                from 
+                    {class_counts}
+                     left join
+                    {desired_counts}
+                    on ({class_counts}.classes = {desired_counts}.desired_classes)
+                    left join
+                    {extra_class_samples}
+                    on ({class_counts}.classes = {extra_class_samples}.extra_classes)
+                    ) as foo
             )
         """.format(**locals())
-        plpy.execute(create_desired_counts_sql)
-
-        extra_class_samples = ''
-        if output_table_size:
-            
-            extra_class_samples = _sample_extra_classes_uniformly_per_output_table_size(
-                class_counts, desired_counts, output_table_size)
-            
-            desired_sample_per_class_sql = """
+    else:
+        desired_sample_per_class_sql = """
             create view {desired_sample_per_class} as (
                 select 
                         classes,
@@ -390,7 +437,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                     select  
                             classes,
                             case (select 1 where desired_values is null)
-                                when 1 then extra_values
+                                when 1 then class_count
                                 else desired_values
                             end as desired_values,
                             class_count 
@@ -399,43 +446,16 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                          left join
                         {desired_counts}
                         on ({class_counts}.classes = {desired_counts}.desired_classes)
-                        left join
-                        {extra_class_samples}
-                        on ({class_counts}.classes = {extra_class_samples}.extra_classes)
                         ) as foo
                 )
             """.format(**locals())
-        else:
-            desired_sample_per_class_sql = """
-                create view {desired_sample_per_class} as (
-                    select 
-                            classes,
-                            desired_values::int as sample_class_size,
-                            class_count as actual_class_size,
-                            case 
-                              when (desired_values - class_count) = 0 then 'nosample'
-                              when (desired_values - class_count) > 0 then 'oversample' else 'undersample' 
-                            end  as category
-                    from (
-                        select  
-                                classes,
-                                case (select 1 where desired_values is null)
-                                    when 1 then class_count
-                                    else desired_values
-                                end as desired_values,
-                                class_count 
-                        from 
-                            {class_counts}
-                             left join
-                            {desired_counts}
-                            on ({class_counts}.classes = {desired_counts}.desired_classes)
-                            ) as foo
-                    )
-                """.format(**locals())
 
-        #plpy.info(desired_sample_per_class_sql)
-        plpy.execute(desired_sample_per_class_sql)
-        return extra_class_samples
+    #plpy.info(desired_sample_per_class_sql)
+    plpy.execute(desired_sample_per_class_sql)
+    temp_views = [desired_counts, desired_sample_per_class]
+    if extra_class_samples:
+        temp_views.extend([extra_class_samples])
+    return temp_views
 
 def _sample_extra_classes_uniformly_per_output_table_size(class_counts 
                 , desired_counts, output_table_size):
@@ -474,24 +494,65 @@ def _sample_extra_classes_uniformly_per_output_table_size(class_counts
                     ) as {foo_table}) 
                         as remaining_classes)
         """.format(**locals())
-    #plpy.info(extra_class_samples_sql)
+
     plpy.execute(extra_class_samples_sql)
     return extra_class_samples
 
-def _compute_uniform_class_sizes(source_table, class_sizes, output_table_size):
-    sample_string = '{"nosample:{5:7}","oversample:{2:8,6:8,3:7,4:7}","undersample:{1:8}"}'
-    #convert to sample_string to below format
-    #a = {'nosample':{2:7,6:7},'oversample':{3:8,5:8,4:8},'undersample':{1:7}}
-    import yaml
-    d = yaml.load('{'+sample_string.replace('{"','"').replace('"}','"').replace('e:','e":').replace(':{',':"{')+'}')
-    return _convert_string_to_arrays(d['nosample']), _convert_string_to_arrays(d['oversample']), _convert_string_to_arrays(d['undersample'])
 
+def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desired_counts
+                , source_table, output_table, class_col, class_sizes, 
+                output_table_size):
 
-def _convert_string_to_arrays(strng):
-    return strng.replace('}','').replace('{','').split(',')
+    calculated_sample_per_class = unique_string(desp='calculated_sample_per_class')
+    foo_table = unique_string(desp='foo')
 
-#def _convert_pairs_into_dict(strng):
-     #{3:9,4:5}
+    output_table_sql = ''
+    if output_table_size:
+        output_table_sql = """
+                (select {output_table_size}::float8 as a) as {foo_table}
+        """.format(**locals())
+    else:
+        output_table_sql = """
+                (select count(*)::float8 as a from {source_table}) as {foo_table}
+        """.format(**locals())
+
+    calculated_sample_per_class_sql = """
+        create view {calculated_sample_per_class}  as (
+            select 
+                ceil(a/b) as sample_size 
+                ---,mod(a,b::int) as remaining_instances_to_sample 
+            from 
+                {output_table_sql},
+                (select count(distinct({class_col}))::float8 b from {source_table}) as bar  
+        )  
+        """.format(**locals())
+    plpy.execute(calculated_sample_per_class_sql)
+
+    desired_sample_per_class_sql = """
+        create view {desired_sample_per_class} as (
+            select 
+                classes,
+                uniform_sample_size as sample_class_size,
+                class_count as actual_class_size,
+                case 
+                    when (uniform_sample_size - class_count) = 0 then 'nosample'
+                    when (uniform_sample_size - class_count) > 0 then 'oversample' else 'undersample' 
+                end as category
+            from 
+                (select 
+                        classes,
+                        sample_size as uniform_sample_size,
+                        class_count
+                  from
+                      {class_counts},
+                      {calculated_sample_per_class}
+                ) as foo)
+        """.format(**locals())
+    plpy.execute(desired_sample_per_class_sql)
+
+    temp_views = [calculated_sample_per_class, desired_sample_per_class, foo_table]
+
+    return temp_views
 
 
 def _validate_strs (source_table, output_table, class_col, class_sizes,
