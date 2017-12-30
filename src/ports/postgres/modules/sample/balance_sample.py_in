@@ -26,6 +26,7 @@ from utilities.validate_args import table_is_empty
 from utilities.validate_args import get_cols
 from utilities.utilities import py_list_to_sql_string
 from collections import defaultdict 
+import math
 
 m4_changequote(`<!', `!>')
 
@@ -92,14 +93,19 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             """
             class_sizes, extra_samples = _check_formatting_and_values(class_sizes, source_table, 
                             class_col, output_table_size, class_counts)
+            plpy.info('swati')
             plpy.info(class_sizes)
+            plpy.info(extra_samples)
             ## the following should execute only when
             ## a. output_table_size is null 
             ## b. desired_sample_sizes <= output_table_size
             temp_views.extend(_create_desired_and_actual_sampling_views(class_counts, 
                     desired_sample_per_class, desired_counts
                     , source_table, output_table, class_col 
-                    , class_sizes, output_table_size))
+                    , class_sizes, output_table_size, extra_samples))
+
+            # if not extra_samples:
+            #     plpy.error('NOT IMPLEMENTED YET')
 
         if class_sizes.lower() == 'uniform':
             """                  
@@ -396,6 +402,12 @@ class UniqueDict(dict):
 
 
 def __check_value_type(value):
+    try:
+        float(value)
+    except ValueError:
+        # plpy.error("Sample: Value is neither a float or integer")
+        raise ValueError("Sample: Specify either fractions or whole numbers for each class sample size.")
+
     import re
     if re.match("^\d+?\.\d+?$", value) is not None and not float(value).is_integer():
         valueType = float
@@ -416,40 +428,28 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
     # class_sizes = '3:a,5:b' # error values are string
     #class_sizes = '3:0.2,4:0.3,6:0.5'
     class_sizes_arr = class_sizes.split(',')
-    plpy.info([0])
-    firstValue = class_sizes_arr[0].split(':')[1]
-
-    try:
-        float(firstValue)
-    except ValueError:
-        # plpy.error("Sample: Value is neither a float or integer")
-        raise ValueError("Sample: Specify either fractions or whole numbers for each class sample size.")
-
-    firstValueType = __check_value_type(firstValue)
-    plpy.info(firstValueType)
-    #contains_fractions = False if firstValueType != float else True
 
     cs_dict = UniqueDict(defaultdict())
-    cs_dict[class_sizes_arr[0].split(':')[0]] = firstValueType(firstValue)
     
     numeric_value_sum = 0
     fraction_value_sum = 0.0
-    if len(class_sizes_arr) > 1 :
-        for x in class_sizes_arr[1:]:
-            val = x.split(':')
-            # Following error type is invalidated by Frank as of 29th Dec.
-            # if __check_value_type(val[1].strip(), firstValueType) != firstValueType:
-                #plpy.error("Sample: Specify either fractions or whole number values for ALL classes.")
-            valueType = __check_value_type(val[1])
-            fraction_value_sum += valueType(val[1]) if valueType == float else 0.0
-            numeric_value_sum += valueType(val[1]) if valueType != float else 0
-            cs_dict[val[0].strip()] = valueType(val[1])
+
+    for x in class_sizes_arr:
+        val = x.split(':')
+        valueType = __check_value_type(val[1])
+        # Following error type is invalidated by Frank as of 29th Dec.
+        # if __check_value_type(val[1].strip(), valueType) != valueType:
+            #plpy.error("Sample: Specify either fractions or whole number values for ALL classes.")
+        fraction_value_sum += valueType(val[1]) if valueType == float else 0.0
+        numeric_value_sum += valueType(val[1]) if valueType != float else 0
+        cs_dict[val[0].strip()] = valueType(val[1])
 
     all_classes = cs_dict.keys()
+    plpy.info(fraction_value_sum)
+    plpy.info(numeric_value_sum)
 
     # Check to see if specified classes are present in the class_col
-    if len(all_classes) > 1:
-        all_classes = str(all_classes)[1:-1]
+    all_classes = str(all_classes)[1:-1]
 
     does_all_specified_class_exists = plpy.execute("""
             select 
@@ -461,7 +461,8 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
         """.format(**locals()))
 
     if does_all_specified_class_exists.nrows() > 0:
-        plpy.error("""Sample: Specified classes do not exist in {class_col}""".format(**locals()))
+        plpy.error("""Sample: Specified classes do not exist in 
+            {class_col}""".format(**locals()))
 
     if fraction_value_sum > 1.0 or (fraction_value_sum == 1.0 and numeric_value_sum != 0):
         plpy.error("""Sample: Fraction sum < 1.0 ( or at most 1.0 only 
@@ -480,10 +481,13 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
     extra_samples = True
 
     # no fractions are present
-    if fraction_value_sum == 0.0: 
+    from fractions import Fraction
+    if Fraction(fraction_value_sum) == Fraction(0.0): 
+        plpy.info(fraction_value_sum)
         # there are no fractions present in class_sizes 
         if (not output_table_size): 
             # sample others uniformly with class_sizes given   
+            plpy.info('s1')
             return class_sizes, extra_samples
 
         if output_table_size < numeric_value_sum:
@@ -491,24 +495,26 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
             
         if output_table_size == numeric_value_sum:
             # no need to sample other classes
+            plpy.info('s2')
             return class_sizes, False
-
+        plpy.info('s3')
         return class_sizes, True
-
+    plpy.info('p1')
     # only fractions are present which also sum to 1.0
-    if fraction_value_sum == 1.0:
+    if Fraction(fraction_value_sum) == Fraction(1.0):
         ## No need for sampling other classes
-        return _compute_class_sizes(cs_dict, total_table_size), False
-
+        return _compute_class_sizes(cs_dict, total_table_size)[0], False
+    plpy.info('p2')
     # Compute class distributions for comma-delimited fractions
     # and class_sizes with both comma-delimited fractions and 
     # comma-delimited whole number samples
-    if fraction_value_sum > 0:
+    if Fraction(fraction_value_sum) > Fraction(0.0):
         # if output table size is null
         sum_remaining_class_samples = plpy.execute("""
-                select sum(class_counts) as remaining_classes from {class_counts} 
+                select sum({class_counts}.class_count) as remaining_classes from {class_counts} 
                 where classes not in ({all_classes})
                 """.format(**locals()))
+        plpy.info('p3')
         if (not output_table_size):
 
             y = 1.0 - fraction_value_sum
@@ -516,17 +522,18 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
                 numeric_value_sum += sum_remaining_class_samples[0]['remaining_classes']
             if numeric_value_sum == 0:
                 # this case happens only when there is only one class present in class col
-                return _compute_class_sizes(cs_dict, total_table_size), False
+                return _compute_class_sizes(cs_dict, total_table_size)[0], False
 
             x = float(numeric_value_sum) / y
-            class_size = _compute_class_sizes(cs_dict, x)
-
+            class_size,_ = _compute_class_sizes(cs_dict, x)
+            plpy.info('p4')
+            plpy.info(class_size)
             return class_size, extra_samples
 
+        plpy.info('p5')
         # if output_table_size is given:
         output_table_size = float(output_table_size)
-        fractional_classes_sample_size = output_table_size * fraction_value_sum
-        total_desired_sample_size = fractional_classes_sample_size + numeric_value_sum
+        class_size, total_desired_sample_size = _compute_class_sizes(cs_dict, output_table_size)
         
         if total_desired_sample_size > output_table_size:
             plpy.error("""Sample: Output table size ({output_table_size}) must be more than total desired sample size i.e {total_desired_sample_size}""".format(**locals()))
@@ -534,22 +541,26 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
         if total_desired_sample_size == output_table_size:
             # no need to sample other classes
             # fractions should be multiplied by output_table_size to get proper whole number values
-            return _compute_class_sizes(cs_dict, output_table_size), False   
+            return class_size, False   
 
         if total_desired_sample_size < output_table_size:
             # Sample other classes uniformly
             # fractions should be multiplied by output_table_size to get proper whole number values
-            return _compute_class_sizes(cs_dict, output_table_size), True   
+            return class_size, True   
         
 def _compute_class_sizes(cs_dict, x):
     class_size = ''
-    for clas, class_size in cs_dict.iteritems():
-        if float(class_sizes).is_integer():
-            class_size += str(clas) + ':' + str(class_size) + ','
+    total_desired_size = 0
+    for clas, class_val in cs_dict.iteritems():
+        if float(class_val).is_integer():
+            total_desired_size += class_val
+            class_size += str(clas) + ':' + str(class_val) + ','
         else:
-            class_size += str(clas) + ':' + str(ceil(class_size * x)) + ','
-    plpy.info(class_size)
-    return class_size[:-1]
+            class_val = int(math.floor(class_val * x))
+            total_desired_size += class_val
+            class_size += str(clas) + ':' + str(class_val) + ','
+
+    return class_size[:-1], class_val
 
 # create frqguency distribution of source table
 def _create_frequency_distribution(class_counts, source_table, class_col):
@@ -568,13 +579,15 @@ def _create_frequency_distribution(class_counts, source_table, class_col):
 
 # Function to create frequency counts and desired counts table.
 def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_class, desired_counts
-            , source_table, output_table, class_col, class_sizes, output_table_size):
+            , source_table, output_table, class_col, class_sizes, output_table_size, extra_samples):
 
     if len(class_sizes.split(',')) > 1:
         values = '\',\''.join(class_sizes.split(','))
     else:
         values = class_sizes.split(',')[0] 
 
+    plpy.info('swati 1')
+    plpy.info(class_sizes)
     create_desired_counts_sql = """
         create view {desired_counts} as (
         select val[1]::text as desired_classes,
@@ -585,45 +598,37 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
         as foo
         )
     """.format(**locals())
+    temp_views = [desired_counts]
     plpy.execute(create_desired_counts_sql)
 
-    extra_class_samples = ''
-    if output_table_size:
-        
-        extra_class_samples = _sample_extra_classes_uniformly_per_output_table_size(
-            class_counts, desired_counts, output_table_size)
-        
+    # no other classes desired other than the one specified in the class_sizes
+    if not extra_samples:
         desired_sample_per_class_sql = """
-        create view {desired_sample_per_class} as (
-            select 
-                    classes,
+            create view {desired_sample_per_class} as (
+                select 
+                    desired_classes as classes,
                     desired_values::int as sample_class_size,
-                    class_count as actual_class_size,
+                    1::int as actual_class_size,
                     case 
                       when (desired_values - class_count) = 0 then 'nosample'
                       when (desired_values - class_count) > 0 then 'oversample' else 'undersample' 
                     end  as category
-            from (
-                select  
-                        classes,
-                        case (select 1 where desired_values is null)
-                            when 1 then extra_values
-                            else desired_values
-                        end as desired_values,
-                        class_count 
-                from 
-                    {class_counts}
-                     left join
-                    {desired_counts}
-                    on ({class_counts}.classes = {desired_counts}.desired_classes)
-                    left join
-                    {extra_class_samples}
-                    on ({class_counts}.classes = {extra_class_samples}.extra_classes)
-                    ) as foo
+            from 
+                {class_counts}
+                join
+                {desired_counts}
+                on ({class_counts}.classes = {desired_counts}.desired_classes)
             )
-        """.format(**locals())
+            """.format(**locals())
     else:
-        desired_sample_per_class_sql = """
+        # Sample_extra_classes_uniformly_per_output_table_size
+        extra_class_samples = ''
+        if output_table_size:
+            
+            extra_class_samples = _sample_extra_classes_uniformly_per_output_table_size(
+                class_counts, desired_counts, output_table_size)
+            
+            desired_sample_per_class_sql = """
             create view {desired_sample_per_class} as (
                 select 
                         classes,
@@ -637,7 +642,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                     select  
                             classes,
                             case (select 1 where desired_values is null)
-                                when 1 then class_count
+                                when 1 then extra_values
                                 else desired_values
                             end as desired_values,
                             class_count 
@@ -646,15 +651,45 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                          left join
                         {desired_counts}
                         on ({class_counts}.classes = {desired_counts}.desired_classes)
+                        left join
+                        {extra_class_samples}
+                        on ({class_counts}.classes = {extra_class_samples}.extra_classes)
                         ) as foo
                 )
             """.format(**locals())
+        else:
+            desired_sample_per_class_sql = """
+                create view {desired_sample_per_class} as (
+                    select 
+                            classes,
+                            desired_values::int as sample_class_size,
+                            class_count as actual_class_size,
+                            case 
+                              when (desired_values - class_count) = 0 then 'nosample'
+                              when (desired_values - class_count) > 0 then 'oversample' else 'undersample' 
+                            end  as category
+                    from (
+                        select  
+                                classes,
+                                case (select 1 where desired_values is null)
+                                    when 1 then class_count
+                                    else desired_values
+                                end as desired_values,
+                                class_count 
+                        from 
+                            {class_counts}
+                             left join
+                            {desired_counts}
+                            on ({class_counts}.classes = {desired_counts}.desired_classes)
+                            ) as foo
+                    )
+                """.format(**locals())
+        if extra_class_samples:
+            temp_views.extend([extra_class_samples])
 
     #plpy.info(desired_sample_per_class_sql)
     plpy.execute(desired_sample_per_class_sql)
-    temp_views = [desired_counts, desired_sample_per_class]
-    if extra_class_samples:
-        temp_views.extend([extra_class_samples])
+    temp_views.append(desired_sample_per_class)
     return temp_views
 
 def _sample_extra_classes_uniformly_per_output_table_size(class_counts 
