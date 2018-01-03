@@ -128,10 +128,16 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             if oversampling:
                 with_replacement = True
             #{5:5}
+            # undersampling_res = plpy.execute("""
+            #     select array_agg(concat_ws(':',classes::text,sample_class_size::text)) 
+            #             as undersample_set from {desired_sample_per_class} 
+            #     where category = 'undersample' 
+            #     """.format(**locals()))
+
             undersampling_res = plpy.execute("""
-                select array_agg(concat_ws(':',classes::text,sample_class_size::text)) 
-                        as undersample_set from {desired_sample_per_class} 
-                where category = 'undersample' 
+                select array_agg(classes::text || ':' || sample_class_size::text)
+                        as undersample_set from {desired_sample_per_class}
+                where category = 'undersample'
                 """.format(**locals()))
 
             if undersampling_res.nrows() > 0 and undersampling_res[0]['undersample_set'] is not None:
