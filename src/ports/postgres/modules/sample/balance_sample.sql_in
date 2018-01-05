@@ -41,7 +41,7 @@ m4_include(`SQLCommon.m4')
 </ul>
 </div>
 
-@brief A method for independently sampling classes to receive a 
+@brief A method for independently sampling classes to receive a
 balanced data set.
 It is commonly used to where classes have greater imbalanced ratio.
 It ensures the subclasses are adequately represented in the sample.
@@ -75,13 +75,13 @@ table.</dd>
 </dd>
 
 <dt>class_sizes (optional)</dt>
-<dd>VARCHAR, default ‘uniform’.  
+<dd>VARCHAR, default ‘uniform’.
 
 @note
 Current implementation only supports 'undersample'.
 
-Parameter to define the size of the different class values.  
-(Class values are sometimes also called levels). 
+Parameter to define the size of the different class values.
+(Class values are sometimes also called levels).
 
 Can take the following forms:
 
@@ -91,66 +91,66 @@ All class values will be resampled to have the same number of rows.
 </li>
 <li><b>'undersample'</b>:
 Under-sample such that all class values end up with the same number of
-observations as the minority class.  Done without replacement by default 
+observations as the minority class.  Done without replacement by default
 unless the parameter ‘with_replacement’ is set to TRUE.
 </li>
 <li><b>'oversample'</b>:
-Over-sample with replacement such that all class values end up with the 
-same number of observations as the majority class.  Not affected by the 
-parameter ‘with_replacement’ since over-sampling is always done with 
+Over-sample with replacement such that all class values end up with the
+same number of observations as the majority class.  Not affected by the
+parameter ‘with_replacement’ since over-sampling is always done with
 replacement.
 </li>
 </ul>
 
-You can also explicitly set class size in a string containing a 
-comma-delimited list. Order does not matter and all class values do not 
-need to be specified.  Use the format “class_value_1=x, class_value_2=y, …” 
-where the class value in the list must exist in the column ‘class_col’.  
+You can also explicitly set class size in a string containing a
+comma-delimited list. Order does not matter and all class values do not
+need to be specified.  Use the format “class_value_1=x, class_value_2=y, …”
+where the class value in the list must exist in the column ‘class_col’.
 
 It can be set to either:
 
 <ul>
 <li><b>Float</b> in the range [0.0,1.0] representing fraction of the data set.
 
-E.g., ‘male=0.4, female=0.6’ means you want to resample the dataset to 
+E.g., ‘male=0.4, female=0.6’ means you want to resample the dataset to
 result in 40% male and 60% female proportion in the ‘output_table’.
 </li>
 
 <li><b>Integer</b> representing the desired number of observations.
 
-E.g.,  ‘male=3000, female=7000’ means you want to resample the dataset 
+E.g.,  ‘male=3000, female=7000’ means you want to resample the dataset
 to result in 3000 male and 7000 female rows in the ‘output_table’.
 </li>
 </ul>
 
 @note
-The allowed names for class values follows object naming rules in 
-PostgreSQL [6].  Quoted identifiers are allowed and should be enclosed 
-in double quotes “ in the usual way.  If for some reason the class values 
-in the examples above were “MaLe” and “FeMaLe” then the comma delimited 
+The allowed names for class values follows object naming rules in
+PostgreSQL [6].  Quoted identifiers are allowed and should be enclosed
+in double quotes “ in the usual way.  If for some reason the class values
+in the examples above were “MaLe” and “FeMaLe” then the comma delimited
 list for ‘class_size’ would be:  ‘“MaLe”=0.4, “FeMaLe”=0.6’.
 </dd>
 
 <dt>output_table_size (optional)</dt>
-<dd>INTEGER, default NULL.  Desired size of the output data set.  
+<dd>INTEGER, default NULL.  Desired size of the output data set.
 
 @note
-Current implementation does not support configuring 
+Current implementation does not support configuring
 output_table_size.
 
-This parameter is ignored if ‘class_size’ parameter is set to either 
-‘oversample’ or ‘undersample’ since output table size is already 
-determined.  
-If NULL, the resulting output table size will depend on the settings 
-for the ‘class_size’ parameter.  
+This parameter is ignored if ‘class_size’ parameter is set to either
+‘oversample’ or ‘undersample’ since output table size is already
+determined.
+If NULL, the resulting output table size will depend on the settings
+for the ‘class_size’ parameter.
 
 You can set ‘output_table_size’ to either:
 <ul>
 
-<li><b>Float</b></li> in the range (0.0,1.0) representing fraction of the input 
-data set size.  
+<li><b>Float</b></li> in the range (0.0,1.0) representing fraction of the input
+data set size.
 
-E.g., ‘0.4’ means you want an ‘ouput_table’ that is 40% the size 
+E.g., ‘0.4’ means you want an ‘ouput_table’ that is 40% the size
 of the input ‘source_table’.
 
 <li><b>Integer</b></li> representing the desired number of rows.
@@ -167,7 +167,7 @@ parameter is NULL, no grouping is used so the sampling is
 non-stratified, that is, the whole table is treated as a
 single group.
 
-@note 
+@note
 Current implementation does not support grouping_cols
 </dd>
 
@@ -349,7 +349,7 @@ m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------------
 
 -- Online help
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample_help(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
     message VARCHAR
 ) RETURNS VARCHAR AS $$
     PythonFunction(sample, balance_sample, balance_sample_help)
@@ -358,9 +358,9 @@ m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 
 -------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample_help()
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample()
 RETURNS VARCHAR AS $$
-    SELECT MADLIB_SCHEMA.balance_sample_help('');
+    SELECT MADLIB_SCHEMA.balance_sample('');
 $$ LANGUAGE sql IMMUTABLE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 -------------------------------------------------------------------------------
