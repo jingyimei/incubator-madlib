@@ -76,6 +76,8 @@ INSERT INTO "TEST_s" VALUES
 (70,70,3,2)
 ;
 
+-- select balance_sample_help();
+
 --- Test for random undersampling without replacement
 DROP TABLE IF EXISTS out_s;
 SELECT balance_sample('"TEST_s"', 'out_s', 'gr1', 'undersample', NULL, NULL, FALSE);
