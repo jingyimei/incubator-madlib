@@ -25,7 +25,7 @@ from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
 from utilities.validate_args import get_cols
 from utilities.utilities import py_list_to_sql_string
-from collections import defaultdict 
+from collections import defaultdict
 import math
 
 m4_changequote(`<!', `!>')
@@ -118,8 +118,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         # class_sizes = '3:8,5:4,4:28'
         if sampling_with_comma_delimited_class_sizes or class_sizes.lower() == 'uniform':
             oversampling = plpy.execute("""
-                SELECT * FROM {desired_sample_per_class} 
-                WHERE category = 'oversample' 
+                SELECT * FROM {desired_sample_per_class}
+                WHERE category = 'oversample'
                 """.format(**locals())).nrows() > 0
             if oversampling:
                 with_replacement = True
@@ -133,7 +133,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             if undersampling_res.nrows() > 0 and undersampling_res[0]['undersample_set'] is not None:
                 for val in undersampling_res[0]['undersample_set']:
                     desired_undersample_class_counts[val.split(':')[0]] = val.split(':')[1]
-                
+
             nosampling = plpy.execute("""
                 SELECT * FROM {desired_sample_per_class} WHERE category = 'nosample'
                 """.format(**locals())).nrows() > 0
@@ -164,9 +164,9 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     {source_table}
                 """.format(**locals())
             if oversampling:
-                select_oversample_classes = """ WHERE {class_col}::text in 
-                            (SELECT classes 
-                            FROM {desired_sample_per_class} 
+                select_oversample_classes = """ WHERE {class_col}::text in
+                            (SELECT classes
+                            FROM {desired_sample_per_class}
                             WHERE category like 'oversample')
                 """.format(**locals())
                 classwise_row_numbering_sql += select_oversample_classes
@@ -343,11 +343,11 @@ def __undersampling_with_no_replacement(source_table, output_table, class_col,
     foo_table = unique_string(desp='foo')
 
     start_output_qry = """
-        SELECT {source_table_columns} 
+        SELECT {source_table_columns}
         FROM (
             SELECT {source_table_columns}
             FROM {source_table}
-            WHERE {class_col}::text = {dcl}::text
+            WHERE {class_col}::text = '{dcl}'
             ORDER BY random()
             LIMIT {limit_bound}
             ) AS {foo_table}
@@ -452,11 +452,11 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
     all_classes = str(all_classes)[1:-1]
 
     does_all_specified_class_exists = plpy.execute("""
-            SELECT 
-                unnest(ARRAY[{all_classes}]) 
-            EXCEPT 
-            SELECT 
-                distinct({class_col}::text) 
+            SELECT
+                unnest(ARRAY[{all_classes}])
+            EXCEPT
+            SELECT
+                distinct({class_col}::text)
             FROM {source_table}
         """.format(**locals()))
 
@@ -470,8 +470,8 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
 
 
     total_table_size = plpy.execute("""
-            SELECT 
-                count(*) AS total 
+            SELECT
+                count(*) AS total
             FROM {source_table}
         """.format(**locals()))[0]['total']
 
@@ -530,7 +530,7 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
         # if output_table_size is given:
         output_table_size = float(output_table_size)
         class_size, total_desired_sample_size = _compute_class_sizes(cs_dict, output_table_size)
-        
+
         ## Cases when total desired sample size > specified output table size
         if total_desired_sample_size > output_table_size:
             plpy.error("""Sample: Output table size ({output_table_size}) must be more than total desired sample size i.e {total_desired_sample_size}""".format(**locals()))
@@ -640,7 +640,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                             class_count AS actual_class_size,
                             CASE
                               WHEN (desired_values - class_count) = 0 THEN 'nosample'
-                              WHEN (desired_values - class_count) > 0 THEN 'oversample' ELSE 'undersample' 
+                              WHEN (desired_values - class_count) > 0 THEN 'oversample' ELSE 'undersample'
                             END AS category
                     FROM (
                         SELECT
@@ -649,7 +649,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                                     WHEN 1 THEN extra_values
                                     ELSE desired_values
                                 END AS desired_values,
-                                class_count 
+                                class_count
                         FROM
                             {class_counts}
                             LEFT JOIN
@@ -674,7 +674,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                             class_count as actual_class_size,
                             CASE
                               WHEN (desired_values - class_count) = 0 THEN 'nosample'
-                              WHEN (desired_values - class_count) > 0 THEN 'oversample' ELSE 'undersample' 
+                              WHEN (desired_values - class_count) > 0 THEN 'oversample' ELSE 'undersample'
                             END AS category
                     FROM (
                         SELECT
@@ -683,7 +683,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                                     WHEN 1 THEN class_count
                                     ELSE desired_values
                                 END AS desired_values,
-                                class_count 
+                                class_count
                         FROM
                             {class_counts}
                              LEFT JOIN
@@ -712,7 +712,7 @@ def _sample_extra_classes_uniformly_per_output_table_size(class_counts
                 ceil(((desired_total_size - desired_total_class_size)::FLOAT8)/((total_classes - desired_distinct_class_count)::FLOAT8)) AS extra_values
             FROM
                 (SELECT
-                    {output_table_size}::float8 AS desired_total_size) 
+                    {output_table_size}::float8 AS desired_total_size)
                         AS constant_output_table_size,
                 (SELECT
                     sum(desired_values) AS desired_total_class_size,
@@ -720,7 +720,7 @@ def _sample_extra_classes_uniformly_per_output_table_size(class_counts
                 FROM {desired_counts})
                         AS user_desired_class_sizes,
                 (SELECT
-                    --sum(class_count) as total_size, 
+                    --sum(class_count) as total_size,
                     count(*) AS total_classes
                 FROM {class_counts})
                         AS actual_table_frequencies,
@@ -728,11 +728,11 @@ def _sample_extra_classes_uniformly_per_output_table_size(class_counts
                     classes AS extra_classes
                 FROM
                     (SELECT
-                        classes 
+                        classes
                     FROM {class_counts}
                         EXCEPT
                     SELECT
-                        desired_classes 
+                        desired_classes
                     FROM {desired_counts}
                     ) AS {foo_table})
                         AS remaining_classes)
@@ -763,11 +763,11 @@ def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desire
         CREATE VIEW {calculated_sample_per_class}  AS (
             SELECT
                 ceil(a/b) AS sample_size
-                ---,mod(a,b::int) as remaining_instances_to_sample 
+                ---,mod(a,b::int) as remaining_instances_to_sample
             FROM
                 {output_table_sql},
                 (SELECT count(distinct({class_col}))::float8 b FROM {source_table}) AS bar
-        )  
+        )
         """.format(**locals())
     plpy.execute(calculated_sample_per_class_sql)
 
@@ -779,7 +779,7 @@ def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desire
                 class_count AS actual_class_size,
                 CASE
                     WHEN (uniform_sample_size - class_count) = 0 THEN 'nosample'
-                    WHEN (uniform_sample_size - class_count) > 0 THEN 'oversample' ELSE 'undersample' 
+                    WHEN (uniform_sample_size - class_count) > 0 THEN 'oversample' ELSE 'undersample'
                 END AS category
             FROM
                 (SELECT

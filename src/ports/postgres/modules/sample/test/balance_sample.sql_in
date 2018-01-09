@@ -81,7 +81,7 @@ INSERT INTO "TEST_s" VALUES
 --- Test for random undersampling without replacement
 DROP TABLE IF EXISTS out_s;
 SELECT balance_sample('"TEST_s"', 'out_s', 'gr1', 'undersample', NULL, NULL, FALSE);
--- SELECT gr1, count(*) AS c FROM out_s GROUP BY gr1;
+SELECT gr1, count(*) AS c FROM out_s GROUP BY gr1;
 SELECT assert(count(*) = 0, 'Wrong number of samples on undersampling gr1') FROM
         (SELECT gr1, count(*) AS c FROM out_s GROUP BY gr1) AS foo WHERE foo.c != 3;
 
