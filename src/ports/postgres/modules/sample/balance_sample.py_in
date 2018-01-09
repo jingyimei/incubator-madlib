@@ -16,7 +16,6 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import plpy
 from utilities.control import MinWarning
 from utilities.utilities import _assert
 from utilities.utilities import unique_string
@@ -27,6 +26,8 @@ from utilities.validate_args import get_cols
 from utilities.utilities import py_list_to_sql_string
 from collections import defaultdict
 import math
+import plpy
+import re
 
 m4_changequote(`<!', `!>')
 
@@ -379,6 +380,7 @@ def __undersampling_with_no_replacement(source_table, output_table, class_col,
             {minority_sql} )""".format(**locals())
     plpy.execute(output_sql)
 
+
 class UniqueDict(dict):
     def __setitem__(self, key, value):
         if key not in self:
@@ -390,14 +392,12 @@ class UniqueDict(dict):
         else:
             plpy.error("Sample: Same class specified multiple times in class_sizes")
 
-
 def __check_value_type(value):
     try:
         float(value)
     except ValueError:
         raise ValueError("Sample: Specify either fractions or whole numbers for each class sample size.")
 
-    import re
     if re.match("^\d+?\.\d+?$", value) is not None and not float(value).is_integer():
         valueType = float
     elif (re.match(r"[-+]?\d+$", value) is not None):
@@ -522,7 +522,6 @@ def _check_formatting_and_values(class_sizes, source_table, class_col,
                 return _compute_class_sizes(cs_dict, total_table_size)[0], False
 
             # Compute total_desired_sample_size as x
-            ## TODO USE THIS computed X to resample rest of the classes
             x = math.ceil(float(numeric_value_sum) / y)
             class_size,_ = _compute_class_sizes(cs_dict, x)
             return class_size, True
@@ -560,7 +559,6 @@ def _compute_class_sizes(cs_dict, x):
 
     return class_size[:-1], total_desired_size
 
-
 # create frqguency distribution of source table
 def _create_frequency_distribution(class_counts, source_table, class_col):
 
@@ -591,13 +589,11 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                val[2]::int AS desired_values
         FROM
             (SELECT regexp_split_to_array(unnest(ARRAY['{values}']),E':') AS val)
-            ---(SELECT regexp_split_to_array(unnest(ARRAY[['3:9','5:5','4:5']]),E':') as val)
         AS foo
         )
     """.format(**locals())
     temp_views = [desired_counts]
     plpy.execute(create_desired_counts_sql)
-
 
     if not extra_samples:
         """
@@ -741,7 +737,6 @@ def _sample_extra_classes_uniformly_per_output_table_size(class_counts
     plpy.execute(extra_class_samples_sql)
     return extra_class_samples
 
-
 def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desired_counts
                 , source_table, output_table, class_col, class_sizes,
                 output_table_size):
@@ -763,7 +758,6 @@ def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desire
         CREATE VIEW {calculated_sample_per_class}  AS (
             SELECT
                 ceil(a/b) AS sample_size
-                ---,mod(a,b::int) as remaining_instances_to_sample
             FROM
                 {output_table_sql},
                 (SELECT count(distinct({class_col}))::float8 b FROM {source_table}) AS bar
@@ -796,7 +790,6 @@ def _compute_uniform_class_sizes( class_counts, desired_sample_per_class, desire
     temp_views = [calculated_sample_per_class, desired_sample_per_class, foo_table]
 
     return temp_views
-
 
 def _validate_strs (source_table, output_table, class_col, class_sizes,
             output_table_size, grouping_cols, with_replacement):
@@ -840,7 +833,6 @@ def _validate_strs (source_table, output_table, class_col, class_sizes,
         .format(**locals()))
 
     return
-
 
 def balance_sample_help(schema_madlib, message, **kwargs):
     """

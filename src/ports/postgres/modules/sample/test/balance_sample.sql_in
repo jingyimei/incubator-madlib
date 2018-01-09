@@ -381,7 +381,7 @@ SELECT balance_sample('"TEST_s"', 'out_cd2', 'gr1', '2:0.1,3:0.4,5:0.5', NULL, N
 --- sample 5 to round(0.5*45) =  23
 --- Sample size : (sampled size of 2, 3, 5) 5 + 18 + 23 = 46
 --- Only 2,3 and 5 will exist with above mentioned sample counts.
-select * from out_cd2 order by gr1;
+--select * from out_cd2 order by gr1;
 SELECT assert(count(*) >= 45, 'Wrong number of samples on sampling with comma-delimited list') from out_cd2;
 SELECT assert(count(*) = 0, 'Wrong number of samples on sampling with comma-delimited list') from
         (SELECT count(*) AS c FROM out_cd2 where gr1 = 2) AS foo WHERE foo.c != 5;
