@@ -606,7 +606,7 @@ def get_topic_desc(schema_madlib, model_table, vocab_table, desc_table,
             (
                 SELECT
                     topicid,
-                    generate_series(0, array_upper(word_dist, 1) - 1) wordid,
+                    generate_series(1, array_upper(word_dist, 1)) wordid,
                     unnest(word_dist) prob
                 FROM
                     __lda_topic_word_dist__
@@ -678,7 +678,7 @@ def get_word_topic_count(schema_madlib, model_table, output_table):
     plpy.execute("""
         INSERT INTO {output_table}
         SELECT
-            generate_series(0, voc_size - 1) wordid,
+            generate_series(1, voc_size) wordid,
             {schema_madlib}.__lda_util_unnest(model, voc_size, topic_num) word_count
         FROM {model_table}
         """.format(output_table=output_table, schema_madlib=schema_madlib,
@@ -735,7 +735,7 @@ def get_perplexity(schema_madlib, model_table, output_data_table):
 def norm_vocab(vocab_table, out_table):
     """
     @brief Checks the vocabulary and converts non-continous wordids into continuous
-    integers ranging from 0 to voc_size - 1.
+    integers ranging from 1 to voc_size.
     @param vocab_table  The vocabulary table in the form of
                         <wordid::INT4, word::text>
     @param out_table    The normalized vocabulary table
@@ -956,11 +956,11 @@ def _validate_data_table(data_table, voc_size):
         """%d rows have negative docid - use continous non-negative
         integers for docid for better interpretation""" % (rv[0]['cnt']))
 
-    rv = plpy.execute('SELECT count(*) cnt FROM %s WHERE wordid < 0' % (data_table))
+    rv = plpy.execute('SELECT count(*) cnt FROM %s WHERE wordid <= 0' % (data_table))
     _assert(
         rv[0]['cnt'] == 0,
-        """%d rows have negative wordid - the wordid must range from 0 to
-        voc_size - 1""" % (rv[0]['cnt']))
+        """%d rows have negative wordid - the wordid must range from 1 to
+        voc_size""" % (rv[0]['cnt']))
 
     rv = plpy.execute("""
         SELECT
@@ -980,22 +980,22 @@ def _validate_data_table(data_table, voc_size):
         """The actual size of vocabulary %d is larger than the specified %d -
            set the correct voc_size and try again""" % (rv[0]['size'], voc_size))
     _assert(
-        rv[0]['min_wordid'] <= voc_size - 1 and
-        rv[0]['max_wordid'] <= voc_size - 1,
-        """The wordid should be in the range of 0 to %d""" % (voc_size - 1))
+        rv[0]['min_wordid'] <= voc_size and
+        rv[0]['max_wordid'] <= voc_size,
+        """The wordid should be in the range of 1 to %d""" % (voc_size))
     warn(
         rv[0]['size'] == voc_size,
         """Actual size of vocabulary %d is smaller than the specified %d -
            the vocabulary and dataset normalization is highly recommended for
            memory efficiency""" % (rv[0]['size'], voc_size))
     warn(
-        rv[0]['min_wordid'] == 0,
-        """The actual min wordid is large than 0 - the vocabulary and dataset
+        rv[0]['min_wordid'] == 1,
+        """The actual min wordid is large than 1 - the vocabulary and dataset
            normalization is highly recommended for memory efficiency""")
-    warn(rv[0]['max_wordid'] == voc_size - 1,
+    warn(rv[0]['max_wordid'] == voc_size,
          """Actual max word_id is smaller than the specified
-            (voc_size - 1 = %d) - set the voc_size to %d for memory efficiency
-        """ % (voc_size - 1, rv[0]['max_wordid'] + 1))
+            (voc_size = %d) - set the voc_size to %d for memory efficiency
+        """ % (voc_size, rv[0]['max_wordid'] + 1))
 
     rv = plpy.execute('SELECT count(*) cnt FROM %s WHERE count <= 0' % (data_table))
     _assert(

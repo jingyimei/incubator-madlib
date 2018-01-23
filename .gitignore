@@ -1,7 +1,8 @@
 # Ignore build directory
 /build*
 /build-docker*
-
+/cmake-build-debug*
+.gitignore
 # Ignore generated code files
 *.so
 *.o

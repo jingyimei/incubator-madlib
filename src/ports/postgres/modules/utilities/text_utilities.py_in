@@ -10,7 +10,7 @@ def _create_vocab_table(input_table, doc_id_col, word_vec_col, output_table):
     """
     plpy.execute("""
                  CREATE TABLE {output_table} AS
-                 SELECT (row_number() OVER (order by word))::INTEGER - 1 as wordid,
+                 SELECT (row_number() OVER (order by word))::INTEGER as wordid,
                         word::TEXT
                  FROM (
                     SELECT distinct(words) as word

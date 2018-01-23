@@ -189,7 +189,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch: words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) > voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)
@@ -347,7 +347,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch - words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) >voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)
@@ -587,7 +587,7 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch: words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) > voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)
@@ -699,7 +699,7 @@ lda_check_count_ceiling::run(AnyType &args) {
     int example_words_hit_ceiling[10];
     int count = 0;
     const int32_t *model = reinterpret_cast<const int32_t *>(model64.ptr());
-    for (int wordid = 0; wordid < voc_size; wordid ++) {
+    for (int wordid = 1; wordid <= voc_size; wordid ++) {
         int flag = model[wordid * (topic_num + 1) + topic_num];
         if (flag != 0) {
             example_words_hit_ceiling[count ++] = wordid;
