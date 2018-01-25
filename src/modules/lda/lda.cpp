@@ -250,7 +250,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     for(int32_t it = 0; it < iter_num; it++){
         int32_t word_index = topic_num;
         for(int32_t i = 0; i < unique_word_count; i++) {
-            int32_t wordid = words[i];
+            int32_t wordid = words[i] - 1;
             for(int32_t j = 0; j < counts[i]; j++){
                 int32_t topic = doc_topic[word_index];
                 int32_t retopic = __lda_gibbs_sample(
@@ -353,7 +353,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
     if(__min(counts) <= 0)
         throw std::invalid_argument(
             "invalid values in counts");
-    if(__min(topic_assignment) < 0 || __max(topic_assignment) >= topic_num)
+    if(__min(topic_assignment) < 0 || __max(topic_assignment) > topic_num)
         throw std::invalid_argument("invalid values in topics");
     if((size_t)__sum(counts) != topic_assignment.size())
         throw std::invalid_argument(
@@ -384,7 +384,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
     int32_t unique_word_count = static_cast<int32_t>(words.size());
     int32_t word_index = 0;
     for(int32_t i = 0; i < unique_word_count; i++){
-        int32_t wordid = words[i];
+        int32_t wordid = words[i] - 1;
         for(int32_t j = 0; j < counts[i]; j++){
             int32_t topic = topic_assignment[word_index];
             if (model[wordid * (topic_num + 1) + topic] <= 2e9) {
@@ -699,7 +699,7 @@ lda_check_count_ceiling::run(AnyType &args) {
     int example_words_hit_ceiling[10];
     int count = 0;
     const int32_t *model = reinterpret_cast<const int32_t *>(model64.ptr());
-    for (int wordid = 1; wordid <= voc_size; wordid ++) {
+    for (int wordid = 0; wordid < voc_size; wordid ++) {
         int flag = model[wordid * (topic_num + 1) + topic_num];
         if (flag != 0) {
             example_words_hit_ceiling[count ++] = wordid;

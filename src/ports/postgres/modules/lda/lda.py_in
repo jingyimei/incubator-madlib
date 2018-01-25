@@ -170,7 +170,7 @@ class LDATrainer:
                         {schema_madlib}.__lda_count_topic_agg(
                             words,
                             counts,
-                            doc_topic[{topic_num} + 1:array_upper(doc_topic, 1)],
+                            {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1),
                             {voc_size},
                             {topic_num}
                         ) AS model
@@ -190,7 +190,7 @@ class LDATrainer:
                     {schema_madlib}.__lda_count_topic_agg(
                         words,
                         counts,
-                        doc_topic[{topic_num} + 1:array_upper(doc_topic, 1)],
+                        {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1),
                         {voc_size},
                         {topic_num}
                     ) AS model
