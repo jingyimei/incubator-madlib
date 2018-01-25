@@ -133,12 +133,13 @@ class LDATrainer:
             INSERT INTO {output_data_table}
             SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
-                doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
+                {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1) AS topic_assignment
             FROM
                 {work_table_final}
             """.format(output_data_table=self.output_data_table,
                        topic_num=self.topic_num,
-                       work_table_final=work_table_final))
+                       work_table_final=work_table_final,
+                       schema_madlib=self.schema_madlib))
         # etime = time.time()
         # plpy.notice('\t\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
@@ -354,11 +355,12 @@ class LDAPredictor:
             INSERT INTO {doc_topic}
             SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
-                doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
+                {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1) AS topic_assignment
             FROM {work_table_out}
             """.format(doc_topic=self.doc_topic,
                        topic_num=self.topic_num,
-                       work_table_out=self.work_table_1))
+                       work_table_out=self.work_table_1,
+                       schema_madlib=self.schema_madlib))
 
     def infer(self):
         # stime = time.time()
@@ -959,7 +961,7 @@ def _validate_data_table(data_table, voc_size):
     rv = plpy.execute('SELECT count(*) cnt FROM %s WHERE wordid <= 0' % (data_table))
     _assert(
         rv[0]['cnt'] == 0,
-        """%d rows have negative wordid - the wordid must range from 1 to
+        """%d rows have negative or zero wordid - the wordid must range from 1 to
         voc_size""" % (rv[0]['cnt']))
 
     rv = plpy.execute("""
@@ -1131,3 +1133,32 @@ def _validate_model_table(model_table):
             'beta in %s should be a positive real number' % (model_table))
     _assert(rv[0]['model_size'] == ((rv[0]['voc_size']) * (rv[0]['topic_num'] + 1) + 1) / 2,
             "model_size mismatches with voc_size and topic_num in %s" % (model_table))
+
+def get_word_and_topic(schema_madlib, lda_output_table, result_table):
+    """
+    @brief Get the per-word topic id from the lda training output table
+    @param lda_output_table The output table you get from lda traning or predicting
+    @param result_table    The output table for saving the result
+    """
+    _assert(lda_output_table != '',
+            "invalid argument: LDA output table name is not specified")
+    output_tbl_valid(result_table, 'LDA')
+
+    plpy.execute("""
+        CREATE TABLE {result_table} (
+            docid   INT4,
+            wordid  INT4,
+            topicid INT4)
+        m4_ifdef(
+            `__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE)
+            DISTRIBUTED BY (docid)')
+        """.format(result_table=result_table))
+
+    plpy.execute("""
+        INSERT INTO {result_table}
+        SELECT docid, unnest((counts::text || ':' || words::text)::{schema_madlib}.svec::float[]) AS wordid,
+               unnest(topic_assignment) AS topicid
+        FROM {lda_output_table}
+        """.format(lda_output_table=lda_output_table,
+                   schema_madlib=schema_madlib, result_table=result_table))
