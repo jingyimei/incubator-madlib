@@ -189,7 +189,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch: words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) > voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)
@@ -250,7 +250,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     for(int32_t it = 0; it < iter_num; it++){
         int32_t word_index = topic_num;
         for(int32_t i = 0; i < unique_word_count; i++) {
-            int32_t wordid = words[i];
+            int32_t wordid = words[i] - 1;
             for(int32_t j = 0; j < counts[i]; j++){
                 int32_t topic = doc_topic[word_index];
                 int32_t retopic = __lda_gibbs_sample(
@@ -347,7 +347,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch - words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) > voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)
@@ -384,7 +384,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
     int32_t unique_word_count = static_cast<int32_t>(words.size());
     int32_t word_index = 0;
     for(int32_t i = 0; i < unique_word_count; i++){
-        int32_t wordid = words[i];
+        int32_t wordid = words[i] - 1;
         for(int32_t j = 0; j < counts[i]; j++){
             int32_t topic = topic_assignment[word_index];
             if (model[wordid * (topic_num + 1) + topic] <= 2e9) {
@@ -587,7 +587,7 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     if(words.size() != counts.size())
         throw std::invalid_argument(
             "dimensions mismatch: words.size() != counts.size()");
-    if(__min(words) < 0 || __max(words) >= voc_size)
+    if(__min(words) < 1 || __max(words) > voc_size)
         throw std::invalid_argument(
             "invalid values in words");
     if(__min(counts) <= 0)

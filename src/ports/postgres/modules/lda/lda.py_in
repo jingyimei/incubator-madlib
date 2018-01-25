@@ -133,12 +133,13 @@ class LDATrainer:
             INSERT INTO {output_data_table}
             SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
-                doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
+                {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1) AS topic_assignment
             FROM
                 {work_table_final}
             """.format(output_data_table=self.output_data_table,
                        topic_num=self.topic_num,
-                       work_table_final=work_table_final))
+                       work_table_final=work_table_final,
+                       schema_madlib=self.schema_madlib))
         # etime = time.time()
         # plpy.notice('\t\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
@@ -354,11 +355,12 @@ class LDAPredictor:
             INSERT INTO {doc_topic}
             SELECT
                 docid, wordcount, words, counts, doc_topic[1:{topic_num}] topic_count,
-                doc_topic[{topic_num} + 1:array_upper(doc_topic,1)] topic_assignment
+               {schema_madlib}.array_scalar_add(doc_topic[{topic_num} + 1:array_upper(doc_topic,1)], 1) AS topic_assignment
             FROM {work_table_out}
             """.format(doc_topic=self.doc_topic,
                        topic_num=self.topic_num,
-                       work_table_out=self.work_table_1))
+                       work_table_out=self.work_table_1,
+                       schema_madlib=self.schema_madlib))
 
     def infer(self):
         # stime = time.time()
@@ -596,7 +598,7 @@ def get_topic_desc(schema_madlib, model_table, vocab_table, desc_table,
     plpy.execute("""
         INSERT INTO {desc_table}
         SELECT
-            topicid, t2.wordid, prob, word
+            topicid, t2.wordid + 1, prob, word
         FROM
         (
             SELECT
@@ -678,7 +680,7 @@ def get_word_topic_count(schema_madlib, model_table, output_table):
     plpy.execute("""
         INSERT INTO {output_table}
         SELECT
-            generate_series(0, voc_size - 1) wordid,
+            generate_series(1, voc_size) wordid,
             {schema_madlib}.__lda_util_unnest(model, voc_size, topic_num) word_count
         FROM {model_table}
         """.format(output_table=output_table, schema_madlib=schema_madlib,
@@ -980,8 +982,8 @@ def _validate_data_table(data_table, voc_size):
         """The actual size of vocabulary %d is larger than the specified %d -
            set the correct voc_size and try again""" % (rv[0]['size'], voc_size))
     _assert(
-        rv[0]['min_wordid'] <= voc_size - 1 and
-        rv[0]['max_wordid'] <= voc_size - 1,
+        rv[0]['min_wordid'] <= voc_size and
+        rv[0]['max_wordid'] <= voc_size,
         """The wordid should be in the range of 0 to %d""" % (voc_size - 1))
     warn(
         rv[0]['size'] == voc_size,
@@ -989,12 +991,12 @@ def _validate_data_table(data_table, voc_size):
            the vocabulary and dataset normalization is highly recommended for
            memory efficiency""" % (rv[0]['size'], voc_size))
     warn(
-        rv[0]['min_wordid'] == 0,
-        """The actual min wordid is large than 0 - the vocabulary and dataset
+        rv[0]['min_wordid'] == 1,
+        """The actual min wordid is large than 1 - the vocabulary and dataset
            normalization is highly recommended for memory efficiency""")
-    warn(rv[0]['max_wordid'] == voc_size - 1,
+    warn(rv[0]['max_wordid'] == voc_size,
          """Actual max word_id is smaller than the specified
-            (voc_size - 1 = %d) - set the voc_size to %d for memory efficiency
+            (voc_size = %d) - set the voc_size to %d for memory efficiency
         """ % (voc_size - 1, rv[0]['max_wordid'] + 1))
 
     rv = plpy.execute('SELECT count(*) cnt FROM %s WHERE count <= 0' % (data_table))
