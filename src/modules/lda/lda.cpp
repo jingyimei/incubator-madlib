@@ -262,6 +262,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
                 doc_topic[retopic]++;
 
                 if(iter_num == 1) {
+                    elog(INFO, "inside iter_num=1");
                     if (model[wordid * (topic_num + 1) + retopic] <= 2e9) {
                         running_topic_counts[topic] --;
                         running_topic_counts[retopic] ++;
@@ -389,6 +390,8 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
             int32_t topic = topic_assignment[word_index];
             if (model[wordid * (topic_num + 1) + topic] <= 2e9) {
                 model[wordid * (topic_num + 1) + topic]++;
+                elog(INFO, "printing model %d for word %d and topic %d", model,
+                    wordid, topic);
             } else {
                 model[wordid * (topic_num + 1) + topic_num] = 1;
             }
