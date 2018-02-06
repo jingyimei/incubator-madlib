@@ -731,6 +731,15 @@ AnyType l1_norm_with_smoothing::run(AnyType & args){
     return arr;
 }
 
+AnyType example_5::run(AnyType & args){
+    MutableArrayHandle<double> arr = args[0].getAs<MutableArrayHandle<double> >();
+
+    for(size_t i = 0; i < arr.size(); i++)
+        arr[i] += 1;
+
+    return arr;
+}
+
 AnyType lda_parse_model::run(AnyType & args){
     ArrayHandle<int64_t> state = args[0].getAs<ArrayHandle<int64_t> >();
     int32_t voc_size = args[1].getAs<int32_t>();

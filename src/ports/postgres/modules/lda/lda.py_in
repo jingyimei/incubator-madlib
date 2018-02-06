@@ -1131,3 +1131,20 @@ def _validate_model_table(model_table):
             'beta in %s should be a positive real number' % (model_table))
     _assert(rv[0]['model_size'] == ((rv[0]['voc_size']) * (rv[0]['topic_num'] + 1) + 1) / 2,
             "model_size mismatches with voc_size and topic_num in %s" % (model_table))
+
+def example_1(schema_madlib, table_one):
+    plpy.execute("""
+        insert into {table_one}
+        values (1) """.format(table_one=table_one))
+
+def example_2(schema_madlib, input_num):
+    return input_num
+
+def example_2(schema_madlib, input_num):
+    return input_num
+
+def example_4(input_num):
+    return input_num
+
+def example_6(schema_madlib,input_num):
+    pass

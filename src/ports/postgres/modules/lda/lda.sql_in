@@ -185,11 +185,11 @@ lda_train( data_table,
     <dd>TEXT. The name of the table storing the training dataset. Each row is
     in the form <tt>&lt;docid, wordid, count&gt;</tt> where \c docid, \c wordid, and \c count
     are non-negative integers.
-  
+
     The \c docid column refers to the document ID, the \c wordid column is the
     word ID (the index of a word in the vocabulary), and \c count is the
     number of occurrences of the word in the document.
-  
+
     Please note that column names for \c docid, \c wordid, and \c count are currently fixed, so you must use these
     exact names in the data_table.</dd>
 
@@ -404,7 +404,7 @@ SELECT madlib.lda_train( 'my_training',
                          0.01
                        );
 </pre>
-Reminder that column names for \c docid, \c wordid, and \c count are currently fixed, 
+Reminder that column names for \c docid, \c wordid, and \c count are currently fixed,
 so you must use these exact names in the input table.
 After a successful run of the lda_train() function two tables are generated,
 one for storing the learned model and the other for storing the output data table.
@@ -1133,4 +1133,73 @@ MADLIB_SCHEMA.lda_parse_model
 RETURNS MADLIB_SCHEMA._pivotalr_lda_model
 AS 'MODULE_PATHNAME'
 LANGUAGE c STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+-- example udfs
+
+-- define python
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_1
+(
+    table_one     TEXT
+)
+RETURNS SETOF MADLIB_SCHEMA.lda_result AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.example_1(schema_madlib, table_one)
+    return [[table_one,'table 1']]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_2
+(
+    input_num     int
+)
+RETURNS int8 AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    lda.example_2(schema_madlib, input_num)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_3
+(
+    input_num     int
+)
+RETURNS int8 AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    return lda.example_2(schema_madlib, input_num)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_4
+(
+    input_num     int
+)
+RETURNS int8 AS $$
+    PythonFunctionBodyOnly(`lda', `lda')
+    return lda.example_4(input_num)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_6
+(
+    input_num  INT4
+) RETURNS VOID AS $$
+    PythonFunction(lda,lda,example_6)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- define c++
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.example_5
+(
+    arr     FLOAT8[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'example_5'
+LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
